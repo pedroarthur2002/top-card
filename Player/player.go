@@ -1,26 +1,36 @@
-package main
-
-import(
-	"fmt"
-)
+package Player
 
 type Player struct {
-	id int 
+	id       int 
 	userName string
 	password string
-	wins int
-	losses int
+	wins     int
+	losses   int
 }
 
-func registerPlayer (id int, userName string, password string) Player{
+func NewPlayer(id int, userName string, password string) Player {
 	return Player {
-		id: id,
+		id:       id,
 		userName: userName,
 		password: password,
-		wins: 0,
-		losses: 0,
+		wins:     0,
+		losses:   0,
 	}
 }
+
+// Métodos getters públicos
+func (p Player) GetUserName() string {
+	return p.userName
+}
+
+func (p Player) GetPassword() string {
+	return p.password
+}
+
+func (p Player) GetID() int {
+	return p.id
+}
+
 
 /*
 func loginPlayer (userName string, password string,) bool{
