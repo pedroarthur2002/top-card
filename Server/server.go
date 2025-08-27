@@ -1,15 +1,15 @@
-package main
+package server
 
 import (
 	"fmt"
 	"net"
-	"top-card/Player"
+	"top-card/player"
 )
 
 var players []Player.Player
 var nextID = 1
 
-func main() {
+func Run() {
 	// Criação do servidor (ouvindo na porta 8080)
 	ln, err := net.Listen("tcp", ":8080")
 	if err != nil {
@@ -26,6 +26,8 @@ func main() {
 			fmt.Println("Erro do tipo: ", err)
 			continue
 		}
+
+		fmt.Println("Cliente conectado")
 		go handleConnection(conn)
 	}
 }

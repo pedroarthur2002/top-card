@@ -1,13 +1,25 @@
-package main
+package client
 
 import (
 	"bufio"
+	"net"
+	//"encoding/json"
 	"fmt"
 	"os"
 	"strings"
 )
 
-func main() {
+func Run() {
+	// Tenta conectar no servidor na porta 8080
+	conn, err := net.Dial("tcp", "127.0.0.1:8080")
+	if err != nil {
+		fmt.Println("Erro ao conectar no servidor:", err)
+		return
+	}
+	defer conn.Close()
+
+	fmt.Println("Conectado ao servidor TOP CARD!")
+
 	reader := bufio.NewReader(os.Stdin)
 	
 	for {
