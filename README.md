@@ -20,6 +20,5 @@ Rodar o servidor
 ```
 Rodar o client 
 ``` powershell
-  $env:MODE="client"; go run main.go
+  $env:MODE="client"; $env:SERVER_ADDR="127.0.0.1:8080"; go run main.go
 ```
- Melhore esse README. Ele só explica como rodar o código mesmo
