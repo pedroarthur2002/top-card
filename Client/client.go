@@ -10,8 +10,11 @@ import (
 )
 
 func Run() {
-	// Tenta conectar no servidor na porta 8080
-	conn, err := net.Dial("tcp", "127.0.0.1:8080")
+
+	serverAddr := os.Getenv("SERVER_ADDR")
+
+	conn, err := net.Dial("tcp", serverAddr)
+
 	if err != nil {
 		fmt.Println("Erro ao conectar no servidor:", err)
 		return
@@ -74,7 +77,7 @@ func Run() {
 
 			// Implementar a lógica de mandar para o servidor
 			
-		case 3:
+		case 5:
 			fmt.Println("Você escolheu sair. Saindo...")
 			return
 			
