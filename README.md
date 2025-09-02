@@ -22,7 +22,7 @@ docker run -d --name topcard-server --network topcard-network -e MODE=server -p 
 docker run -it --name topcard-client --network topcard-network -e MODE=client -e SERVER_ADDR=topcard-server:8080 topcard-app
 ```
 
-### Executar localmente
+### Executar localmente (no powershell)
 Rodar o servidor
 ``` powershell
   $env:MODE="server"; go run main.go
