@@ -2,24 +2,19 @@
 
 ### Executar com Docker
 
-- Criar rede Docker
-``` bash
-docker network create topcard-network
-```
-
 - Fazer o *build*:
-``` bash
-docker build -t topcard-app .
+``` powershell
+docker-compose build
 ```
 
-- Rodar o servidor
- ``` bash
-docker run -d --name topcard-server --network topcard-network -e MODE=server -p 8080:8080 topcard-app
+- Executar o servidor:
+ ``` powershell
+docker-compose server
 ```
 
-- Rodar o *client*
-``` bash
-docker run -it --name topcard-client --network topcard-network -e MODE=client -e SERVER_ADDR=topcard-server:8080 topcard-app
+- Executar o *client*
+``` powershell
+docker-compose run --rm client
 ```
 
 ### Executar localmente (no powershell)
