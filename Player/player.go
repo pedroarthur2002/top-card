@@ -30,11 +30,3 @@ func (p Player) GetPassword() string {
 func (p Player) GetID() int {
 	return p.id
 }
-
-
-/*
-func loginPlayer (userName string, password string,) bool{
-	
-}
-
-*/

@@ -63,6 +63,13 @@ func Run() {
 				continue
 			}
 			handleRegister(conn, reader)
+
+		case 4:
+			if !isLoggedIn {
+				fmt.Println("Você precisa estar logado para buscar partida!")
+				continue
+			}
+			handleQueue(conn)
 			
 		case 5:
 			fmt.Println("Você escolheu sair. Saindo...")
@@ -76,17 +83,71 @@ func Run() {
 	}
 }
 
+func handleQueue(conn net.Conn) {
+	fmt.Println("\n--- BUSCAR PARTIDA ---")
+	fmt.Println("Entrando na fila de partidas...")
+
+	// Cria a mensagem de requisição de fila
+	queueMessage, err := protocol.CreateQueueRequest(currentUserID)
+	if err != nil {
+		fmt.Println("Erro ao criar mensagem de fila:", err)
+		return
+	}
+
+	// Adiciona quebra de linha para o servidor conseguir ler
+	queueMessage = append(queueMessage, '\n')
+
+	// Envia para o servidor
+	_, err = conn.Write(queueMessage)
+	if err != nil {
+		fmt.Println("Erro ao enviar requisição de fila:", err)
+		return
+	}
+
+	// Lê a resposta do servidor
+	serverReader := bufio.NewScanner(conn)
+	if serverReader.Scan() {
+		responseData := serverReader.Bytes()
+		
+		// Decodifica a resposta
+		message, err := protocol.DecodeMessage(responseData)
+		if err != nil {
+			fmt.Println("Erro ao decodificar resposta:", err)
+			return
+		}
+
+		// Processa resposta de fila
+		if message.Type == protocol.MSG_QUEUE_RESPONSE {
+			queueResp, err := protocol.ExtractQueueResponse(message)
+			if err != nil {
+				fmt.Println("Erro ao extrair resposta de fila:", err)
+				return
+			}
+
+			if queueResp.Success {
+				fmt.Printf("✅ %s\n", queueResp.Message)
+				fmt.Printf("Jogadores na fila: %d\n", queueResp.QueueSize)
+				fmt.Println("Aguardando por oponentes...")
+			} else {
+				fmt.Printf("❌ %s\n", queueResp.Message)
+			}
+		}
+	} else {
+		fmt.Println("Erro ao ler resposta do servidor")
+	}
+}
+
 func handleRegister(conn net.Conn, reader *bufio.Reader) {
 	fmt.Println("\n--- CADASTRO ---")
-	fmt.Print("Insira um nome de usuário (mín. 3 caracteres): ")
+	fmt.Print("Insira um nome de usuário (máx. 3 caracteres): ")
 	userName, _ := reader.ReadString('\n')
 	userName = strings.TrimSpace(userName)
 	
-	fmt.Print("Digite sua senha (mín. 4 caracteres): ")
+	fmt.Print("Digite sua senha (máx. 4 caracteres): ")
 	password, _ := reader.ReadString('\n')
 	password = strings.TrimSpace(password)
 
-	// Validações básicas no cliente
+	// ValidaÃ§Ãµes bÃ¡sicas no cliente
 	if len(userName) < 3 {
 		fmt.Println("❌ Nome de usuário deve ter pelo menos 3 caracteres!")
 		return
@@ -114,7 +175,7 @@ func handleRegister(conn net.Conn, reader *bufio.Reader) {
 		return
 	}
 
-	// Lê a resposta do servidor
+	// LÃª a resposta do servidor
 	serverReader := bufio.NewScanner(conn)
 	if serverReader.Scan() {
 		responseData := serverReader.Bytes()
@@ -136,7 +197,7 @@ func handleRegister(conn net.Conn, reader *bufio.Reader) {
 
 			if registerResp.Success {
 				fmt.Printf("✅ %s\n", registerResp.Message)
-				fmt.Printf("Seu ID de usuário é: %d\n", registerResp.UserID)
+				fmt.Printf("Seu ID de usuário Ã©: %d\n", registerResp.UserID)
 				fmt.Println("Agora você pode fazer login!")
 			} else {
 				fmt.Printf("❌ %s\n", registerResp.Message)
@@ -149,7 +210,7 @@ func handleRegister(conn net.Conn, reader *bufio.Reader) {
 
 func handleLogin(conn net.Conn, reader *bufio.Reader) {
 	fmt.Println("\n--- LOGIN ---")
-	fmt.Print("Insira seu nome de usuário: ")
+	fmt.Print("Insira seu nome de usuÃ¡rio: ")
 	userName, _ := reader.ReadString('\n')
 	userName = strings.TrimSpace(userName)
 	
@@ -174,7 +235,7 @@ func handleLogin(conn net.Conn, reader *bufio.Reader) {
 		return
 	}
 
-	// Lê a resposta do servidor
+	// LÃª a resposta do servidor
 	serverReader := bufio.NewScanner(conn)
 	if serverReader.Scan() {
 		responseData := serverReader.Bytes()
@@ -198,7 +259,7 @@ func handleLogin(conn net.Conn, reader *bufio.Reader) {
 				fmt.Printf("✅ %s\n", loginResp.Message)
 				currentUserID = loginResp.UserID
 				isLoggedIn = true
-				fmt.Printf("Você está logado com ID: %d\n", currentUserID)
+				fmt.Printf("VocÃª estÃ¡ logado com ID: %d\n", currentUserID)
 			} else {
 				fmt.Printf("❌ %s\n", loginResp.Message)
 			}

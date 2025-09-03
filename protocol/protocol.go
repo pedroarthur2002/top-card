@@ -8,6 +8,8 @@ const (
 	MSG_LOGIN_RESPONSE   = "LOGIN_RESPONSE"
 	MSG_REGISTER_REQUEST = "REGISTER_REQUEST"
 	MSG_REGISTER_RESPONSE = "REGISTER_RESPONSE"
+	MSG_QUEUE_REQUEST    = "QUEUE_REQUEST"
+	MSG_QUEUE_RESPONSE   = "QUEUE_RESPONSE"
 )
 
 // Estrutura base para todas as mensagens
@@ -16,7 +18,7 @@ type Message struct {
 	Data interface{} `json:"data"`
 }
 
-// Estrutura para requisição de login
+// Estrutura para requisiÃ§Ã£o de login
 type LoginRequest struct {
 	UserName string `json:"username"`
 	Password string `json:"password"`
@@ -29,7 +31,7 @@ type LoginResponse struct {
 	UserID  int    `json:"user_id,omitempty"` // Apenas se login bem-sucedido
 }
 
-// Estrutura para requisição de cadastro
+// Estrutura para requisiÃ§Ã£o de cadastro
 type RegisterRequest struct {
 	UserName string `json:"username"`
 	Password string `json:"password"`
@@ -42,7 +44,19 @@ type RegisterResponse struct {
 	UserID  int    `json:"user_id,omitempty"` // Apenas se cadastro bem-sucedido
 }
 
-// Função para criar mensagem de requisição de login
+// Estrutura para requisição de fila
+type QueueRequest struct {
+	UserID int `json:"user_id"`
+}
+
+// Estrutura para resposta de fila
+type QueueResponse struct {
+	Success    bool   `json:"success"`
+	Message    string `json:"message"`
+	QueueSize  int    `json:"queue_size"`
+}
+
+// FunÃ§Ã£o para criar mensagem de requisiÃ§Ã£o de login
 func CreateLoginRequest(userName, password string) ([]byte, error) {
 	loginReq := LoginRequest{
 		UserName: userName,
@@ -57,7 +71,7 @@ func CreateLoginRequest(userName, password string) ([]byte, error) {
 	return json.Marshal(message)
 }
 
-// Função para criar mensagem de resposta de login
+// FunÃ§Ã£o para criar mensagem de resposta de login
 func CreateLoginResponse(success bool, message string, userID int) ([]byte, error) {
 	loginResp := LoginResponse{
 		Success: success,
@@ -73,7 +87,7 @@ func CreateLoginResponse(success bool, message string, userID int) ([]byte, erro
 	return json.Marshal(msg)
 }
 
-// Função para criar mensagem de requisição de cadastro
+// FunÃ§Ã£o para criar mensagem de requisiÃ§Ã£o de cadastro
 func CreateRegisterRequest(userName, password string) ([]byte, error) {
 	registerReq := RegisterRequest{
 		UserName: userName,
@@ -88,7 +102,7 @@ func CreateRegisterRequest(userName, password string) ([]byte, error) {
 	return json.Marshal(message)
 }
 
-// Função para criar mensagem de resposta de cadastro
+// FunÃ§Ã£o para criar mensagem de resposta de cadastro
 func CreateRegisterResponse(success bool, message string, userID int) ([]byte, error) {
 	registerResp := RegisterResponse{
 		Success: success,
@@ -104,7 +118,37 @@ func CreateRegisterResponse(success bool, message string, userID int) ([]byte, e
 	return json.Marshal(msg)
 }
 
-// Função para decodificar mensagem recebida
+// Função para criar mensagem de requisição de fila
+func CreateQueueRequest(userID int) ([]byte, error) {
+	queueReq := QueueRequest{
+		UserID: userID,
+	}
+	
+	message := Message{
+		Type: MSG_QUEUE_REQUEST,
+		Data: queueReq,
+	}
+	
+	return json.Marshal(message)
+}
+
+// Função para criar mensagem de resposta de fila
+func CreateQueueResponse(success bool, message string, queueSize int) ([]byte, error) {
+	queueResp := QueueResponse{
+		Success:   success,
+		Message:   message,
+		QueueSize: queueSize,
+	}
+	
+	msg := Message{
+		Type: MSG_QUEUE_RESPONSE,
+		Data: queueResp,
+	}
+	
+	return json.Marshal(msg)
+}
+
+// FunÃ§Ã£o para decodificar mensagem recebida
 func DecodeMessage(data []byte) (*Message, error) {
 	var message Message
 	err := json.Unmarshal(data, &message)
@@ -114,7 +158,7 @@ func DecodeMessage(data []byte) (*Message, error) {
 	return &message, nil
 }
 
-// Função para extrair dados de login request
+// FunÃ§Ã£o para extrair dados de login request
 func ExtractLoginRequest(message *Message) (*LoginRequest, error) {
 	dataBytes, err := json.Marshal(message.Data)
 	if err != nil {
@@ -130,7 +174,7 @@ func ExtractLoginRequest(message *Message) (*LoginRequest, error) {
 	return &loginReq, nil
 }
 
-// Função para extrair dados de login response
+// FunÃ§Ã£o para extrair dados de login response
 func ExtractLoginResponse(message *Message) (*LoginResponse, error) {
 	dataBytes, err := json.Marshal(message.Data)
 	if err != nil {
@@ -146,7 +190,7 @@ func ExtractLoginResponse(message *Message) (*LoginResponse, error) {
 	return &loginResp, nil
 }
 
-// Função para extrair dados de cadastro request
+// FunÃ§Ã£o para extrair dados de cadastro request
 func ExtractRegisterRequest(message *Message) (*RegisterRequest, error) {
 	dataBytes, err := json.Marshal(message.Data)
 	if err != nil {
@@ -162,7 +206,7 @@ func ExtractRegisterRequest(message *Message) (*RegisterRequest, error) {
 	return &registerReq, nil
 }
 
-// Função para extrair dados de cadastro response
+// FunÃ§Ã£o para extrair dados de cadastro response
 func ExtractRegisterResponse(message *Message) (*RegisterResponse, error) {
 	dataBytes, err := json.Marshal(message.Data)
 	if err != nil {
@@ -176,4 +220,36 @@ func ExtractRegisterResponse(message *Message) (*RegisterResponse, error) {
 	}
 	
 	return &registerResp, nil
+}
+
+// Função para extrair dados de fila request
+func ExtractQueueRequest(message *Message) (*QueueRequest, error) {
+	dataBytes, err := json.Marshal(message.Data)
+	if err != nil {
+		return nil, err
+	}
+	
+	var queueReq QueueRequest
+	err = json.Unmarshal(dataBytes, &queueReq)
+	if err != nil {
+		return nil, err
+	}
+	
+	return &queueReq, nil
+}
+
+// Função para extrair dados de fila response
+func ExtractQueueResponse(message *Message) (*QueueResponse, error) {
+	dataBytes, err := json.Marshal(message.Data)
+	if err != nil {
+		return nil, err
+	}
+	
+	var queueResp QueueResponse
+	err = json.Unmarshal(dataBytes, &queueResp)
+	if err != nil {
+		return nil, err
+	}
+	
+	return &queueResp, nil
 }
