@@ -1,15 +1,22 @@
 package protocol
 
-import "encoding/json"
+import (
+	"encoding/json"
+)
 
 // Tipos de mensagens do protocolo
 const (
 	MSG_LOGIN_REQUEST    = "LOGIN_REQUEST"
+	MSG_PING_REQUEST     = "PING_REQUEST"
+	MSG_PING_RESPONSE    = "PING_RESPONSE" 
 	MSG_LOGIN_RESPONSE   = "LOGIN_RESPONSE"
 	MSG_REGISTER_REQUEST = "REGISTER_REQUEST"
 	MSG_REGISTER_RESPONSE = "REGISTER_RESPONSE"
 	MSG_QUEUE_REQUEST    = "QUEUE_REQUEST"
 	MSG_QUEUE_RESPONSE   = "QUEUE_RESPONSE"
+	MSG_MATCH_FOUND      = "MATCH_FOUND"
+	MSG_MATCH_START      = "MATCH_START"
+	MSG_MATCH_END        = "MATCH_END"
 )
 
 // Estrutura base para todas as mensagens
@@ -18,7 +25,18 @@ type Message struct {
 	Data interface{} `json:"data"`
 }
 
-// Estrutura para requisiÃ§Ã£o de login
+// Estrutura para requisição de ping
+type PingRequest struct {
+	UserID    int   `json:"user_id"`
+}
+
+// Estrutura para resposta de ping
+type PingResponse struct { 
+	Success   bool  `json:"success"`  
+	Message   string `json:"message"`
+}
+
+// Estrutura para requisição de login
 type LoginRequest struct {
 	UserName string `json:"username"`
 	Password string `json:"password"`
@@ -31,7 +49,7 @@ type LoginResponse struct {
 	UserID  int    `json:"user_id,omitempty"` // Apenas se login bem-sucedido
 }
 
-// Estrutura para requisiÃ§Ã£o de cadastro
+// Estrutura para requisição de cadastro
 type RegisterRequest struct {
 	UserName string `json:"username"`
 	Password string `json:"password"`
@@ -56,7 +74,58 @@ type QueueResponse struct {
 	QueueSize  int    `json:"queue_size"`
 }
 
-// FunÃ§Ã£o para criar mensagem de requisiÃ§Ã£o de login
+// Estrutura para notificação de partida encontrada
+type MatchFound struct {
+	MatchID      int    `json:"match_id"`
+	OpponentID   int    `json:"opponent_id"`
+	OpponentName string `json:"opponent_name"`
+	Message      string `json:"message"`
+}
+
+// Estrutura para início de partida
+type MatchStart struct {
+	MatchID int    `json:"match_id"`
+	Message string `json:"message"`
+}
+
+// Estrutura para fim de partida
+type MatchEnd struct {
+	MatchID    int    `json:"match_id"`
+	WinnerID   int    `json:"winner_id"`
+	WinnerName string `json:"winner_name"`
+	Message    string `json:"message"`
+}
+
+// Função para criar mensagem de requisição de ping
+func CreatePingRequest(userID int) ([]byte, error) {
+	pingReq := PingRequest{
+		UserID:    userID,
+	}
+
+	message := Message{
+		Type: MSG_PING_REQUEST,
+		Data: pingReq,
+	}
+
+	return json.Marshal(message)
+}
+
+// Função para criar mensagem de reposta de ping
+func CreatePingResponse(success bool, message string) ([]byte, error) {
+	pingResponse := PingResponse{ 
+		Success:   success,
+		Message:   message,
+	}
+
+	msg := Message{
+		Type: MSG_PING_RESPONSE,
+		Data: pingResponse,
+	}
+
+	return json.Marshal(msg)
+}
+
+// Função para criar mensagem de requisição de login
 func CreateLoginRequest(userName, password string) ([]byte, error) {
 	loginReq := LoginRequest{
 		UserName: userName,
@@ -71,7 +140,7 @@ func CreateLoginRequest(userName, password string) ([]byte, error) {
 	return json.Marshal(message)
 }
 
-// FunÃ§Ã£o para criar mensagem de resposta de login
+// Função para criar mensagem de resposta de login
 func CreateLoginResponse(success bool, message string, userID int) ([]byte, error) {
 	loginResp := LoginResponse{
 		Success: success,
@@ -87,7 +156,7 @@ func CreateLoginResponse(success bool, message string, userID int) ([]byte, erro
 	return json.Marshal(msg)
 }
 
-// FunÃ§Ã£o para criar mensagem de requisiÃ§Ã£o de cadastro
+// Função para criar mensagem de requisição de cadastro
 func CreateRegisterRequest(userName, password string) ([]byte, error) {
 	registerReq := RegisterRequest{
 		UserName: userName,
@@ -102,7 +171,7 @@ func CreateRegisterRequest(userName, password string) ([]byte, error) {
 	return json.Marshal(message)
 }
 
-// FunÃ§Ã£o para criar mensagem de resposta de cadastro
+// Função para criar mensagem de resposta de cadastro
 func CreateRegisterResponse(success bool, message string, userID int) ([]byte, error) {
 	registerResp := RegisterResponse{
 		Success: success,
@@ -148,7 +217,56 @@ func CreateQueueResponse(success bool, message string, queueSize int) ([]byte, e
 	return json.Marshal(msg)
 }
 
-// FunÃ§Ã£o para decodificar mensagem recebida
+// Função para criar mensagem de partida encontrada
+func CreateMatchFound(matchID, opponentID int, opponentName, message string) ([]byte, error) {
+	matchFound := MatchFound{
+		MatchID:      matchID,
+		OpponentID:   opponentID,
+		OpponentName: opponentName,
+		Message:      message,
+	}
+	
+	msg := Message{
+		Type: MSG_MATCH_FOUND,
+		Data: matchFound,
+	}
+	
+	return json.Marshal(msg)
+}
+
+// Função para criar mensagem de início de partida
+func CreateMatchStart(matchID int, message string) ([]byte, error) {
+	matchStart := MatchStart{
+		MatchID: matchID,
+		Message: message,
+	}
+	
+	msg := Message{
+		Type: MSG_MATCH_START,
+		Data: matchStart,
+	}
+	
+	return json.Marshal(msg)
+}
+
+// Função para criar mensagem de fim de partida
+func CreateMatchEnd(matchID, winnerID int, winnerName, message string) ([]byte, error) {
+	matchEnd := MatchEnd{
+		MatchID:    matchID,
+		WinnerID:   winnerID,
+		WinnerName: winnerName,
+		Message:    message,
+	}
+	
+	msg := Message{
+		Type: MSG_MATCH_END,
+		Data: matchEnd,
+	}
+	
+	return json.Marshal(msg)
+}
+
+// Função para decodificar mensagem recebida
 func DecodeMessage(data []byte) (*Message, error) {
 	var message Message
 	err := json.Unmarshal(data, &message)
@@ -158,7 +276,39 @@ func DecodeMessage(data []byte) (*Message, error) {
 	return &message, nil
 }
 
-// FunÃ§Ã£o para extrair dados de login request
+// Função para extrair dados de ping request
+func ExtractPingRequest(message *Message) (*PingRequest, error) {
+	dataBytes, err := json.Marshal(message.Data)
+	if err != nil {
+		return nil, err
+	}
+	
+	var PingRequest PingRequest
+	err = json.Unmarshal(dataBytes, &PingRequest)
+	if err != nil {
+		return nil, err
+	}
+	
+	return &PingRequest, nil
+}
+
+// Função para extrair dados de ping response
+func ExtractPingResponse(message *Message) (*PingResponse, error) { 
+	dataBytes, err := json.Marshal(message.Data)
+	if err != nil {
+		return nil, err
+	}
+	
+	var pingResponse PingResponse
+	err = json.Unmarshal(dataBytes, &pingResponse)
+	if err != nil {
+		return nil, err
+	}
+	
+	return &pingResponse, nil
+}
+
+// Função para extrair dados de login request
 func ExtractLoginRequest(message *Message) (*LoginRequest, error) {
 	dataBytes, err := json.Marshal(message.Data)
 	if err != nil {
@@ -174,7 +324,7 @@ func ExtractLoginRequest(message *Message) (*LoginRequest, error) {
 	return &loginReq, nil
 }
 
-// FunÃ§Ã£o para extrair dados de login response
+// Função para extrair dados de login response
 func ExtractLoginResponse(message *Message) (*LoginResponse, error) {
 	dataBytes, err := json.Marshal(message.Data)
 	if err != nil {
@@ -190,7 +340,7 @@ func ExtractLoginResponse(message *Message) (*LoginResponse, error) {
 	return &loginResp, nil
 }
 
-// FunÃ§Ã£o para extrair dados de cadastro request
+// Função para extrair dados de cadastro request
 func ExtractRegisterRequest(message *Message) (*RegisterRequest, error) {
 	dataBytes, err := json.Marshal(message.Data)
 	if err != nil {
@@ -206,7 +356,7 @@ func ExtractRegisterRequest(message *Message) (*RegisterRequest, error) {
 	return &registerReq, nil
 }
 
-// FunÃ§Ã£o para extrair dados de cadastro response
+// Função para extrair dados de cadastro response
 func ExtractRegisterResponse(message *Message) (*RegisterResponse, error) {
 	dataBytes, err := json.Marshal(message.Data)
 	if err != nil {
@@ -252,4 +402,52 @@ func ExtractQueueResponse(message *Message) (*QueueResponse, error) {
 	}
 	
 	return &queueResp, nil
+}
+
+// Função para extrair dados de partida encontrada
+func ExtractMatchFound(message *Message) (*MatchFound, error) {
+	dataBytes, err := json.Marshal(message.Data)
+	if err != nil {
+		return nil, err
+	}
+	
+	var matchFound MatchFound
+	err = json.Unmarshal(dataBytes, &matchFound)
+	if err != nil {
+		return nil, err
+	}
+	
+	return &matchFound, nil
+}
+
+// Função para extrair dados de início de partida
+func ExtractMatchStart(message *Message) (*MatchStart, error) {
+	dataBytes, err := json.Marshal(message.Data)
+	if err != nil {
+		return nil, err
+	}
+	
+	var matchStart MatchStart
+	err = json.Unmarshal(dataBytes, &matchStart)
+	if err != nil {
+		return nil, err
+	}
+	
+	return &matchStart, nil
+}
+
+// Função para extrair dados de fim de partida
+func ExtractMatchEnd(message *Message) (*MatchEnd, error) {
+	dataBytes, err := json.Marshal(message.Data)
+	if err != nil {
+		return nil, err
+	}
+	
+	var matchEnd MatchEnd
+	err = json.Unmarshal(dataBytes, &matchEnd)
+	if err != nil {
+		return nil, err
+	}
+	
+	return &matchEnd, nil
 }

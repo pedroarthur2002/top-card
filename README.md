@@ -9,7 +9,7 @@ docker-compose build
 
 - Executar o servidor:
  ``` powershell
-docker-compose server
+docker-compose up server
 ```
 
 - Executar o *client*
