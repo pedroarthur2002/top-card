@@ -117,7 +117,11 @@ func notifyMatchFound(playerID, opponentID int, opponentName string, matchID int
 func notifyMatchStart(player1ID, player2ID, matchID int) {
 	message := "A partida começou! Boa sorte!"
 	
-	// Notifica jogador 1
+	// Inicia o jogo
+	time.Sleep(1 * time.Second)
+	match.GetManager().StartGame(matchID)
+	
+	// Notifica jogador 1 (é o primeiro a jogar)
 	connectionsMutex.Lock()
 	conn1, exists1 := userConnections[player1ID]
 	connectionsMutex.Unlock()
@@ -127,6 +131,13 @@ func notifyMatchStart(player1ID, player2ID, matchID int) {
 		if err == nil {
 			response = append(response, '\n')
 			conn1.Write(response)
+		}
+		
+		// Envia estado do jogo indicando que é o turno do Player1
+		gameState, err := protocol.CreateGameState(matchID, "É seu turno! Digite um número para jogar.", true, false, false)
+		if err == nil {
+			gameState = append(gameState, '\n')
+			conn1.Write(gameState)
 		}
 	}
 
@@ -140,6 +151,13 @@ func notifyMatchStart(player1ID, player2ID, matchID int) {
 		if err == nil {
 			response = append(response, '\n')
 			conn2.Write(response)
+		}
+		
+		// Envia estado do jogo indicando que deve aguardar
+		gameState, err := protocol.CreateGameState(matchID, "Aguardando o oponente jogar primeiro...", false, false, false)
+		if err == nil {
+			gameState = append(gameState, '\n')
+			conn2.Write(gameState)
 		}
 	}
 }
@@ -197,6 +215,10 @@ func handleConnection(conn net.Conn) {
 			handleQueue(conn, message)
 		case protocol.MSG_PING_REQUEST:
 			handlePing(conn, message)
+		case protocol.MSG_GAME_MOVE:
+			handleGameMove(conn, message)
+		case protocol.MSG_STATS_REQUEST:  
+			handleStats(conn, message)
 		default:
 			fmt.Println("Tipo de mensagem não reconhecido:", message.Type)
 		}
@@ -204,6 +226,170 @@ func handleConnection(conn net.Conn) {
 
 	if err := scanner.Err(); err != nil {
 		fmt.Println("Erro ao ler do cliente:", err)
+	}
+}
+
+
+func notifyMatchEnd(player1ID, player2ID int, currentMatch *match.Match) {
+	var winnerName string
+	if currentMatch.Player1.GetID() == currentMatch.Winner {
+		winnerName = currentMatch.Player1.GetUserName()
+	} else {
+		winnerName = currentMatch.Player2.GetUserName()
+	}
+	
+	player1Num := *currentMatch.Player1Number
+	player2Num := *currentMatch.Player2Number
+	
+	message := fmt.Sprintf("Jogo finalizado! %s vs %s: %d vs %d", 
+		currentMatch.Player1.GetUserName(), currentMatch.Player2.GetUserName(), 
+		player1Num, player2Num)
+	
+	// NOVA PARTE: Atualiza as estatísticas dos jogadores
+	updatePlayerStats(currentMatch.Player1.GetID(), currentMatch.Player2.GetID(), currentMatch.Winner)
+	
+	// Notifica jogador 1
+	connectionsMutex.Lock()
+	conn1, exists1 := userConnections[player1ID]
+	connectionsMutex.Unlock()
+	
+	if exists1 {
+		response, err := protocol.CreateMatchEnd(currentMatch.ID, currentMatch.Winner, winnerName, message)
+		if err == nil {
+			response = append(response, '\n')
+			conn1.Write(response)
+		}
+	}
+
+	// Notifica jogador 2
+	connectionsMutex.Lock()
+	conn2, exists2 := userConnections[player2ID]
+	connectionsMutex.Unlock()
+	
+	if exists2 {
+		response, err := protocol.CreateMatchEnd(currentMatch.ID, currentMatch.Winner, winnerName, message)
+		if err == nil {
+			response = append(response, '\n')
+			conn2.Write(response)
+		}
+	}
+}
+
+
+func updatePlayerStats(player1ID, player2ID, winnerID int) {
+	// Encontra os players no slice e atualiza suas estatísticas
+	for i := range players {
+		if players[i].GetID() == player1ID {
+			if winnerID == player1ID {
+				players[i].AddWin()
+			} else {
+				players[i].AddLoss()
+			}
+			fmt.Printf("📊 Estatísticas atualizadas para %s: %dW-%dL\n", 
+				players[i].GetUserName(), players[i].GetWins(), players[i].GetLosses())
+		} else if players[i].GetID() == player2ID {
+			if winnerID == player2ID {
+				players[i].AddWin()
+			} else {
+				players[i].AddLoss()
+			}
+			fmt.Printf("📊 Estatísticas atualizadas para %s: %dW-%dL\n", 
+				players[i].GetUserName(), players[i].GetWins(), players[i].GetLosses())
+		}
+	}
+}
+
+
+// função para lidar com jogadas no servidor
+func handleGameMove(conn net.Conn, message *protocol.Message) {
+	// Extrai os dados da jogada
+	gameMove, err := protocol.ExtractGameMove(message)
+	if err != nil {
+		fmt.Println("Erro ao extrair dados da jogada:", err)
+		return
+	}
+
+	fmt.Printf("Jogada recebida - Usuário: %d, Partida: %d, Número: %d\n", 
+		gameMove.UserID, gameMove.MatchID, gameMove.Number)
+
+	// Processa a jogada - CORREÇÃO AQUI
+	success, responseMessage := match.GetManager().MakeMove(gameMove.MatchID, gameMove.UserID, gameMove.Number)
+	
+	if !success {
+		// Envia mensagem de erro para o jogador
+		response, err := protocol.CreateGameState(gameMove.MatchID, responseMessage, false, false, false)
+		if err != nil {
+			fmt.Printf("Erro ao criar resposta de erro: %v\n", err)
+			return
+		}
+		
+		response = append(response, '\n')
+		conn.Write(response)
+		return
+	}
+
+	// Se a jogada foi bem-sucedida, verifica o estado da partida
+	currentMatch := match.GetManager().GetMatch(gameMove.MatchID)
+	if currentMatch == nil {
+		fmt.Printf("Partida %d não encontrada\n", gameMove.MatchID)
+		return
+	}
+
+	// Se o jogo terminou (ambos jogaram)
+	if currentMatch.Status == "finished" {
+		// Notifica fim de partida para ambos jogadores
+		go notifyMatchEnd(currentMatch.Player1.GetID(), currentMatch.Player2.GetID(), currentMatch)
+	} else {
+		// Notifica atualização de turno para ambos jogadores
+		go notifyTurnUpdate(currentMatch)
+	}
+}
+
+// Função para notificar atualização de turno
+func notifyTurnUpdate(currentMatch *match.Match) {
+	player1ID := currentMatch.Player1.GetID()
+	player2ID := currentMatch.Player2.GetID()
+	
+	// Mensagem para Player1
+	connectionsMutex.Lock()
+	conn1, exists1 := userConnections[player1ID]
+	connectionsMutex.Unlock()
+	
+	if exists1 {
+		isPlayer1Turn := currentMatch.CurrentTurn == player1ID
+		var message string
+		if isPlayer1Turn {
+			message = "É seu turno! Digite um número para jogar."
+		} else {
+			message = "Jogada realizada! Aguardando oponente..."
+		}
+		
+		response, err := protocol.CreateTurnUpdate(currentMatch.ID, message, isPlayer1Turn)
+		if err == nil {
+			response = append(response, '\n')
+			conn1.Write(response)
+		}
+	}
+
+	// Mensagem para Player2
+	connectionsMutex.Lock()
+	conn2, exists2 := userConnections[player2ID]
+	connectionsMutex.Unlock()
+	
+	if exists2 {
+		isPlayer2Turn := currentMatch.CurrentTurn == player2ID
+		var message string
+		if isPlayer2Turn {
+			message = "É seu turno! Digite um número para jogar."
+		} else {
+			message = "Jogada realizada! Aguardando oponente..."
+		}
+		
+		response, err := protocol.CreateTurnUpdate(currentMatch.ID, message, isPlayer2Turn)
+		if err == nil {
+			response = append(response, '\n')
+			conn2.Write(response)
+		}
 	}
 }
 
@@ -407,6 +593,59 @@ func handlePing(conn net.Conn, message *protocol.Message) {
 	_, err = conn.Write(response)
 	if err != nil {
 		fmt.Println("Erro ao enviar resposta de ping:", err)
+	}
+}
+
+func handleStats(conn net.Conn, message *protocol.Message) {
+	// Extrai os dados da requisição de estatísticas
+	statsReq, err := protocol.ExtractStatsRequest(message)
+	if err != nil {
+		fmt.Println("Erro ao extrair dados de estatísticas:", err)
+		return
+	}
+
+	fmt.Printf("Requisição de estatísticas - UserID: %d\n", statsReq.UserID)
+
+	// Verifica se o usuário está conectado
+	connectedMutex.Lock()
+	isConnected := connectedUsers[statsReq.UserID]
+	connectedMutex.Unlock()
+
+	var response []byte
+
+	if !isConnected {
+		// Usuário não está conectado/autenticado
+		response, err = protocol.CreateStatsResponse(false, "Usuário não está conectado!", "", 0, 0, 0.0)
+		fmt.Printf("Estatísticas negadas - usuário %d não está conectado\n", statsReq.UserID)
+	} else {
+		// Busca o player
+		player, found := findPlayerByID(statsReq.UserID)
+		if !found {
+			response, err = protocol.CreateStatsResponse(false, "Usuário não encontrado!", "", 0, 0, 0.0)
+			fmt.Printf("Estatísticas negadas - usuário %d não encontrado\n", statsReq.UserID)
+		} else {
+			// Usuário conectado, retorna estatísticas
+			wins := player.GetWins()
+			losses := player.GetLosses()
+			winRate := player.GetWinRate()
+			message := "Estatísticas obtidas com sucesso!"
+			
+			response, err = protocol.CreateStatsResponse(true, message, player.GetUserName(), wins, losses, winRate)
+			fmt.Printf("Estatísticas enviadas para usuário %d: %dW-%dL (%.1f%%)\n", 
+				statsReq.UserID, wins, losses, winRate)
+		}
+	}
+
+	if err != nil {
+		fmt.Println("Erro ao criar resposta de estatísticas:", err)
+		return
+	}
+
+	// Envia a resposta
+	response = append(response, '\n')
+	_, err = conn.Write(response)
+	if err != nil {
+		fmt.Println("Erro ao enviar resposta de estatísticas:", err)
 	}
 }
 

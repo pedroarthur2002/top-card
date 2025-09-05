@@ -17,12 +17,32 @@ const (
 	MSG_MATCH_FOUND      = "MATCH_FOUND"
 	MSG_MATCH_START      = "MATCH_START"
 	MSG_MATCH_END        = "MATCH_END"
+	MSG_GAME_MOVE     = "GAME_MOVE"
+	MSG_GAME_STATE    = "GAME_STATE" 
+	MSG_TURN_UPDATE   = "TURN_UPDATE"
+	MSG_STATS_REQUEST  = "STATS_REQUEST"
+	MSG_STATS_RESPONSE = "STATS_RESPONSE"
 )
 
 // Estrutura base para todas as mensagens
 type Message struct {
 	Type string      `json:"type"`
 	Data interface{} `json:"data"`
+}
+
+// Estrutura para resposta de estatísticas
+type StatsResponse struct {
+	Success   bool    `json:"success"`
+	Message   string  `json:"message"`
+	UserName  string  `json:"username,omitempty"`
+	Wins      int     `json:"wins,omitempty"`
+	Losses    int     `json:"losses,omitempty"`
+	WinRate   float64 `json:"win_rate,omitempty"`
+}
+
+// Estrutura para requisição de estatísticas
+type StatsRequest struct {
+	UserID int `json:"user_id"`
 }
 
 // Estrutura para requisição de ping
@@ -94,6 +114,62 @@ type MatchEnd struct {
 	WinnerID   int    `json:"winner_id"`
 	WinnerName string `json:"winner_name"`
 	Message    string `json:"message"`
+}
+
+// Estrutura para jogada do jogo
+type GameMove struct {
+	UserID  int `json:"user_id"`
+	MatchID int `json:"match_id"`
+	Number  int `json:"number"`
+}
+
+// Estrutura para estado do jogo
+type GameState struct {
+	MatchID       int    `json:"match_id"`
+	Message       string `json:"message"`
+	YourTurn      bool   `json:"your_turn"`
+	OpponentMoved bool   `json:"opponent_moved"`
+	GameOver      bool   `json:"game_over"`
+}
+
+// Estrutura para atualização de turno
+type TurnUpdate struct {
+	MatchID  int    `json:"match_id"`
+	Message  string `json:"message"`
+	YourTurn bool   `json:"your_turn"`
+}
+
+// Função para criar mensagem de requisição de estatísticas
+func CreateStatsRequest(userID int) ([]byte, error) {
+	statsReq := StatsRequest{
+		UserID: userID,
+	}
+
+	message := Message{
+		Type: MSG_STATS_REQUEST,
+		Data: statsReq,
+	}
+
+	return json.Marshal(message)
+}
+
+// Função para criar mensagem de resposta de estatísticas
+func CreateStatsResponse(success bool, message, userName string, wins, losses int, winRate float64) ([]byte, error) {
+	statsResp := StatsResponse{
+		Success:  success,
+		Message:  message,
+		UserName: userName,
+		Wins:     wins,
+		Losses:   losses,
+		WinRate:  winRate,
+	}
+
+	msg := Message{
+		Type: MSG_STATS_RESPONSE,
+		Data: statsResp,
+	}
+
+	return json.Marshal(msg)
 }
 
 // Função para criar mensagem de requisição de ping
@@ -276,6 +352,38 @@ func DecodeMessage(data []byte) (*Message, error) {
 	return &message, nil
 }
 
+// Função para extrair dados de requisição de estatísticas
+func ExtractStatsRequest(message *Message) (*StatsRequest, error) {
+	dataBytes, err := json.Marshal(message.Data)
+	if err != nil {
+		return nil, err
+	}
+
+	var statsReq StatsRequest
+	err = json.Unmarshal(dataBytes, &statsReq)
+	if err != nil {
+		return nil, err
+	}
+
+	return &statsReq, nil
+}
+
+// Função para extrair dados de resposta de estatísticas
+func ExtractStatsResponse(message *Message) (*StatsResponse, error) {
+	dataBytes, err := json.Marshal(message.Data)
+	if err != nil {
+		return nil, err
+	}
+
+	var statsResp StatsResponse
+	err = json.Unmarshal(dataBytes, &statsResp)
+	if err != nil {
+		return nil, err
+	}
+
+	return &statsResp, nil
+}
+
 // Função para extrair dados de ping request
 func ExtractPingRequest(message *Message) (*PingRequest, error) {
 	dataBytes, err := json.Marshal(message.Data)
@@ -450,4 +558,102 @@ func ExtractMatchEnd(message *Message) (*MatchEnd, error) {
 	}
 	
 	return &matchEnd, nil
+}
+
+// Função para criar mensagem de jogada
+func CreateGameMove(userID, matchID, number int) ([]byte, error) {
+	gameMove := GameMove{
+		UserID:  userID,
+		MatchID: matchID,
+		Number:  number,
+	}
+	
+	message := Message{
+		Type: MSG_GAME_MOVE,
+		Data: gameMove,
+	}
+	
+	return json.Marshal(message)
+}
+
+// Função para criar mensagem de estado do jogo
+func CreateGameState(matchID int, message string, yourTurn, opponentMoved, gameOver bool) ([]byte, error) {
+	gameState := GameState{
+		MatchID:       matchID,
+		Message:       message,
+		YourTurn:      yourTurn,
+		OpponentMoved: opponentMoved,
+		GameOver:      gameOver,
+	}
+	
+	msg := Message{
+		Type: MSG_GAME_STATE,
+		Data: gameState,
+	}
+	
+	return json.Marshal(msg)
+}
+
+// Função para criar mensagem de atualização de turno
+func CreateTurnUpdate(matchID int, message string, yourTurn bool) ([]byte, error) {
+	turnUpdate := TurnUpdate{
+		MatchID:  matchID,
+		Message:  message,
+		YourTurn: yourTurn,
+	}
+	
+	msg := Message{
+		Type: MSG_TURN_UPDATE,
+		Data: turnUpdate,
+	}
+	
+	return json.Marshal(msg)
+}
+
+// Função para extrair dados de jogada
+func ExtractGameMove(message *Message) (*GameMove, error) {
+	dataBytes, err := json.Marshal(message.Data)
+	if err != nil {
+		return nil, err
+	}
+	
+	var gameMove GameMove
+	err = json.Unmarshal(dataBytes, &gameMove)
+	if err != nil {
+		return nil, err
+	}
+	
+	return &gameMove, nil
+}
+
+// Função para extrair dados de estado do jogo
+func ExtractGameState(message *Message) (*GameState, error) {
+	dataBytes, err := json.Marshal(message.Data)
+	if err != nil {
+		return nil, err
+	}
+	
+	var gameState GameState
+	err = json.Unmarshal(dataBytes, &gameState)
+	if err != nil {
+		return nil, err
+	}
+	
+	return &gameState, nil
+}
+
+// Função para extrair dados de atualização de turno
+func ExtractTurnUpdate(message *Message) (*TurnUpdate, error) {
+	dataBytes, err := json.Marshal(message.Data)
+	if err != nil {
+		return nil, err
+	}
+	
+	var turnUpdate TurnUpdate
+	err = json.Unmarshal(dataBytes, &turnUpdate)
+	if err != nil {
+		return nil, err
+	}
+	
+	return &turnUpdate, nil
 }

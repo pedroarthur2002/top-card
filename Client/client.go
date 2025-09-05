@@ -11,6 +11,7 @@ import (
 	"top-card/protocol"
 )
 
+var currentMatchID int
 var currentUserID int
 var isLoggedIn bool
 var inMatch bool // Flag para indicar se está em partida
@@ -59,7 +60,9 @@ func Run() {
 		fmt.Println("3 - Abrir pacote de cartas")
 		fmt.Println("4 - Buscar partida")
 		fmt.Println("5 - Verificar ping")
-		fmt.Println("6 - Sair")
+		fmt.Println("6 - Fazer jogada")        
+		fmt.Println("7 - Ver estatísticas")
+		fmt.Println("8 - Sair")
 		
 		fmt.Print("Insira sua opção: ")
 		input, _ := reader.ReadString('\n')
@@ -105,8 +108,26 @@ func Run() {
 				continue
 			}
 			handlePing(conn)
-		
+
 		case 6:
+		if !isLoggedIn {
+			fmt.Println("Você precisa estar logado para jogar!")
+			continue
+		}
+		if !inMatch {
+			fmt.Println("Você precisa estar em uma partida para jogar!")
+			continue
+		}
+		handleGameMove(conn, reader)
+
+		case 7:  // NOVA OPÇÃO
+		if !isLoggedIn {
+			fmt.Println("Você precisa estar logado para ver suas estatísticas!")
+			continue
+		}
+		handleStats(conn)
+		
+		case 8:
 			fmt.Println("Você escolheu sair. Saindo...")
 			return
 			
@@ -125,35 +146,32 @@ func messageDistributor(conn net.Conn) {
 	for serverReader.Scan() {
 		responseData := serverReader.Bytes()
 		
-		// Cria uma cópia dos dados para não ter problemas de referência
 		dataCopy := make([]byte, len(responseData))
 		copy(dataCopy, responseData)
 		
-		// Decodifica a mensagem para verificar o tipo
 		message, err := protocol.DecodeMessage(dataCopy)
 		if err != nil {
 			fmt.Printf("\n🔴 Erro ao decodificar mensagem do servidor: %v\n", err)
 			continue
 		}
 
-		// Distribui mensagens baseado no tipo
 		switch message.Type {
-		case protocol.MSG_LOGIN_RESPONSE, protocol.MSG_REGISTER_RESPONSE, protocol.MSG_QUEUE_RESPONSE, protocol.MSG_PING_RESPONSE:
+		case protocol.MSG_LOGIN_RESPONSE, protocol.MSG_REGISTER_RESPONSE, protocol.MSG_QUEUE_RESPONSE, protocol.MSG_PING_RESPONSE, protocol.MSG_STATS_RESPONSE:
 			// Mensagens síncronas - envia para canal síncrono
 			select {
 			case syncResponseChan <- dataCopy:
 			case <-time.After(100 * time.Millisecond):
-				fmt.Printf("\n⚠️  Timeout ao enviar resposta síncrona\n")
+				fmt.Printf("\n⚠️ Timeout ao enviar resposta síncrona\n")
 			}
-		case protocol.MSG_MATCH_FOUND, protocol.MSG_MATCH_START, protocol.MSG_MATCH_END:
+		case protocol.MSG_MATCH_FOUND, protocol.MSG_MATCH_START, protocol.MSG_MATCH_END, protocol.MSG_GAME_STATE, protocol.MSG_TURN_UPDATE:
 			// Mensagens assíncronas - envia para canal assíncrono
 			select {
 			case asyncMessageChan <- dataCopy:
 			case <-time.After(100 * time.Millisecond):
-				fmt.Printf("\n⚠️  Timeout ao enviar mensagem assíncrona\n")
+				fmt.Printf("\n⚠️ Timeout ao enviar mensagem assíncrona\n")
 			}
 		default:
-			fmt.Printf("\n⚠️  Tipo de mensagem desconhecido: %s\n", message.Type)
+			fmt.Printf("\n⚠️ Tipo de mensagem desconhecido: %s\n", message.Type)
 		}
 	}
 
@@ -182,6 +200,10 @@ func asyncMessageProcessor() {
 				handleMatchStart(message)
 			case protocol.MSG_MATCH_END:
 				handleMatchEnd(message)
+			case protocol.MSG_GAME_STATE:
+				handleGameState(message)
+			case protocol.MSG_TURN_UPDATE:
+				handleTurnUpdate(message)
 			}
 		}
 	}
@@ -205,15 +227,57 @@ func handleMatchFound(message *protocol.Message) {
 		return
 	}
 
+	currentMatchID = matchFound.MatchID // Armazena o ID da partida atual
+
 	fmt.Printf("\n\n🎯 ===== PARTIDA ENCONTRADA! =====\n")
 	fmt.Printf("🎮 Match ID: %d\n", matchFound.MatchID)
-	fmt.Printf("⚔️  Oponente: %s (ID: %d)\n", matchFound.OpponentName, matchFound.OpponentID)
+	fmt.Printf("⚔️ Oponente: %s (ID: %d)\n", matchFound.OpponentName, matchFound.OpponentID)
 	fmt.Printf("📝 %s\n", matchFound.Message)
 	fmt.Printf("⏳ Preparando a partida...\n")
 	fmt.Printf("==================================\n")
-	fmt.Print("Pressione Enter para continuar...")
+	// Remove o "Pressione Enter para continuar" para evitar confusão
 	
 	inMatch = true
+}
+
+// Manipula estado do jogo
+func handleGameState(message *protocol.Message) {
+	gameState, err := protocol.ExtractGameState(message)
+	if err != nil {
+		fmt.Printf("\n🔴 Erro ao extrair estado do jogo: %v\n", err)
+		return
+	}
+
+	fmt.Printf("\n\n🎮 ===== ESTADO DO JOGO =====\n")
+	fmt.Printf("📝 %s\n", gameState.Message)
+	
+	if gameState.YourTurn && !gameState.GameOver {
+		fmt.Printf("🎯 É SEU TURNO! Use a opção 6 do menu para jogar.\n")
+	} else if !gameState.GameOver {
+		fmt.Printf("⏳ Aguardando o oponente jogar...\n")
+	}
+	
+	fmt.Printf("============================\n")
+	// Remove o "Pressione Enter para continuar" para evitar confusão
+}
+
+// Manipula atualização de turno
+func handleTurnUpdate(message *protocol.Message) {
+	turnUpdate, err := protocol.ExtractTurnUpdate(message)
+	if err != nil {
+		fmt.Printf("\n🔴 Erro ao extrair atualização de turno: %v\n", err)
+		return
+	}
+
+	fmt.Printf("\n\n🔄 ===== ATUALIZAÇÃO =====\n")
+	fmt.Printf("📝 %s\n", turnUpdate.Message)
+	
+	if turnUpdate.YourTurn {
+		fmt.Printf("🎯 É SEU TURNO! Use a opção 6 do menu para jogar.\n")
+	}
+	
+	fmt.Printf("========================\n")
+	// Remove o "Pressione Enter para continuar" para evitar confusão
 }
 
 // Manipula notificação de início de partida
@@ -227,9 +291,10 @@ func handleMatchStart(message *protocol.Message) {
 	fmt.Printf("\n\n🚀 ===== PARTIDA INICIADA! =====\n")
 	fmt.Printf("🎮 Match ID: %d\n", matchStart.MatchID)
 	fmt.Printf("🎯 %s\n", matchStart.Message)
-	fmt.Printf("⚔️  Que comece a batalha!\n")
+	fmt.Printf("⚔️ Que comece a batalha!\n")
+	fmt.Printf("📋 Use a opção 6 do menu quando for seu turno!\n")
 	fmt.Printf("===============================\n")
-	fmt.Print("Pressione Enter para continuar...")
+	// Remove o "Pressione Enter para continuar" para evitar confusão
 	
 	inMatch = true
 }
@@ -242,7 +307,7 @@ func handleMatchEnd(message *protocol.Message) {
 		return
 	}
 
-	fmt.Printf("\n\n🏁 ===== PARTIDA FINALIZADA! =====\n")
+	fmt.Printf("\n\n🏆 ===== PARTIDA FINALIZADA! =====\n")
 	fmt.Printf("🎮 Match ID: %d\n", matchEnd.MatchID)
 	
 	if matchEnd.WinnerID == currentUserID {
@@ -254,9 +319,43 @@ func handleMatchEnd(message *protocol.Message) {
 	fmt.Printf("📝 %s\n", matchEnd.Message)
 	fmt.Printf("🔄 Voltando ao menu principal...\n")
 	fmt.Printf("=================================\n")
-	fmt.Print("Pressione Enter para continuar...")
+	// Remove o "Pressione Enter para continuar" para evitar confusão
 	
 	inMatch = false
+	currentMatchID = 0 // Limpa o ID da partida
+}
+
+func handleGameMove(conn net.Conn, reader *bufio.Reader) {
+	fmt.Println("\n--- FAZER JOGADA ---")
+	fmt.Print("Digite um número inteiro para jogar: ")
+	input, _ := reader.ReadString('\n')
+	input = strings.TrimSpace(input)
+	
+	number, err := strconv.Atoi(input)
+	if err != nil {
+		fmt.Println("❌ Por favor, digite um número válido!")
+		return
+	}
+
+	// Cria a mensagem de jogada
+	moveMessage, err := protocol.CreateGameMove(currentUserID, currentMatchID, number)
+	if err != nil {
+		fmt.Println("Erro ao criar mensagem de jogada:", err)
+		return
+	}
+
+	// Adiciona quebra de linha
+	moveMessage = append(moveMessage, '\n')
+
+	// Envia para o servidor
+	_, err = conn.Write(moveMessage)
+	if err != nil {
+		fmt.Println("Erro ao enviar jogada:", err)
+		return
+	}
+
+	fmt.Printf("✅ Jogada enviada: %d\n", number)
+	fmt.Println("⏳ Aguardando resposta do servidor...")
 }
 
 func handleQueue(conn net.Conn) {
@@ -439,6 +538,67 @@ func handleLogin(conn net.Conn, reader *bufio.Reader) {
 			fmt.Printf("Você está logado com ID: %d\n", currentUserID)
 		} else {
 			fmt.Printf("❌ %s\n", loginResp.Message)
+		}
+	}
+}
+
+func handleStats(conn net.Conn) {
+	fmt.Println("\n--- SUAS ESTATÍSTICAS ---")
+
+	// Cria a mensagem de requisição de estatísticas
+	statsMessage, err := protocol.CreateStatsRequest(currentUserID)
+	if err != nil {
+		fmt.Println("Erro ao criar mensagem de estatísticas:", err)
+		return
+	}
+
+	// Adiciona quebra de linha
+	statsMessage = append(statsMessage, '\n')
+
+	// Envia para o servidor
+	_, err = conn.Write(statsMessage)
+	if err != nil {
+		fmt.Println("Erro ao enviar requisição de estatísticas:", err)
+		return
+	}
+
+	// Aguarda resposta síncrona
+	responseData, err := waitForSyncResponse(5 * time.Second)
+	if err != nil {
+		fmt.Println("Erro:", err)
+		return
+	}
+
+	// Decodifica a resposta
+	message, err := protocol.DecodeMessage(responseData)
+	if err != nil {
+		fmt.Println("Erro ao decodificar resposta:", err)
+		return
+	}
+
+	// Processa resposta de estatísticas
+	if message.Type == protocol.MSG_STATS_RESPONSE {
+		statsResp, err := protocol.ExtractStatsResponse(message)
+		if err != nil {
+			fmt.Println("Erro ao extrair resposta de estatísticas:", err)
+			return
+		}
+
+		if statsResp.Success {
+			fmt.Printf("\n📊 ===== ESTATÍSTICAS DE %s =====\n", statsResp.UserName)
+			fmt.Printf("🏆 Vitórias: %d\n", statsResp.Wins)
+			fmt.Printf("😔 Derrotas: %d\n", statsResp.Losses)
+			fmt.Printf("🎯 Taxa de vitória: %.1f%%\n", statsResp.WinRate)
+			
+			totalGames := statsResp.Wins + statsResp.Losses
+			fmt.Printf("🎮 Total de partidas: %d\n", totalGames)
+			
+			if totalGames == 0 {
+				fmt.Printf("💡 Dica: Jogue algumas partidas para ver suas estatísticas!\n")
+			}
+			fmt.Printf("========================================\n")
+		} else {
+			fmt.Printf("❌ %s\n", statsResp.Message)
 		}
 	}
 }
