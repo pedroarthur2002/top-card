@@ -8,27 +8,32 @@ import (
 	"strings"
 	"strconv"
 	"time"
-	"top-card/protocol"
+	"sync"
+	"top-card/internal/protocol"
 )
 
 var currentMatchID int
 var currentUserID int
 var isLoggedIn bool
 var inMatch bool // Flag para indicar se está em partida
+var isMyTurn bool = false  // Flag para controlar se é o turno do jogador
+
+var isConnected = true
+var connectionMutex sync.Mutex
+
+var playerInventory []protocol.CardInfo // Inventário local do jogador
 
 // Canais para comunicação entre goroutines
 var syncResponseChan = make(chan []byte, 10)
 var asyncMessageChan = make(chan []byte, 10)
 
 func Run() {
-
 	serverAddr := os.Getenv("SERVER_ADDR")
 	if serverAddr == "" {
-		serverAddr = "localhost:8080" // Default se não estiver definido
+		serverAddr = "localhost:8080"
 	}
 
 	conn, err := net.Dial("tcp", serverAddr)
-
 	if err != nil {
 		fmt.Println("Erro ao conectar no servidor:", err)
 		return
@@ -37,24 +42,32 @@ func Run() {
 
 	fmt.Println("Conectado ao servidor TOP CARD!")
 
-	// Inicia a goroutine para distribuir mensagens do servidor
 	go messageDistributor(conn)
-	
-	// Inicia a goroutine para processar mensagens assíncronas
 	go asyncMessageProcessor()
 
 	reader := bufio.NewReader(os.Stdin)
 	
 	for {
+		clearScreen()
+
+		connectionMutex.Lock()
+		connected := isConnected
+		connectionMutex.Unlock()
+		
 		fmt.Println("\n========================")
 		fmt.Println("Bem vindo ao TOP CARD!")
 		fmt.Println("========================")
-		if isLoggedIn {
-			fmt.Printf("Logado como ID: %d\n", currentUserID)
-			if inMatch {
-				fmt.Println("🎮 Você está atualmente em uma partida!")
-			}
+		
+		// Mostra status da conexão
+		if !connected {
+			fmt.Println("🔴 DESCONECTADO")
+			fmt.Println("⚠️  Dados perdidos - registre-se novamente")
 		}
+
+		if inMatch {
+			fmt.Println("🎮 Você está em uma partida!")
+		}
+		
 		fmt.Println("1 - Fazer login")
 		fmt.Println("2 - Cadastrar-se")
 		fmt.Println("3 - Abrir pacote de cartas")
@@ -62,6 +75,11 @@ func Run() {
 		fmt.Println("5 - Verificar ping")
 		fmt.Println("6 - Fazer jogada")        
 		fmt.Println("7 - Ver estatísticas")
+		if !connected {
+			fmt.Println("9 - 🔄 RECONECTAR AO SERVIDOR")  // Destaque quando desconectado
+		} else {
+			fmt.Println("9 - Reconectar ao servidor")
+		}
 		fmt.Println("8 - Sair")
 		
 		fmt.Print("Insira sua opção: ")
@@ -89,7 +107,7 @@ func Run() {
 				fmt.Println("Você precisa estar logado para abrir os pacotes de cartas!")
 				continue
 			}
-			fmt.Println("Funcionalidade ainda não implementada...") // Fazer a abertura de pacotes
+			handleCardPack(conn)
 
 		case 4:
 			if !isLoggedIn {
@@ -110,31 +128,32 @@ func Run() {
 			handlePing(conn)
 
 		case 6:
-		if !isLoggedIn {
-			fmt.Println("Você precisa estar logado para jogar!")
-			continue
-		}
-		if !inMatch {
-			fmt.Println("Você precisa estar em uma partida para jogar!")
-			continue
-		}
-		handleGameMove(conn, reader)
+			if !isLoggedIn {
+				fmt.Println("Você precisa estar logado para jogar!")
+				continue
+			}
+			if !inMatch {
+				fmt.Println("Você precisa estar em uma partida para jogar!")
+				continue
+			}
+			handleGameMove(conn, reader)
 
-		case 7:  // NOVA OPÇÃO
-		if !isLoggedIn {
-			fmt.Println("Você precisa estar logado para ver suas estatísticas!")
-			continue
-		}
-		handleStats(conn)
+		case 7:
+			if !isLoggedIn {
+				fmt.Println("Você precisa estar logado para ver suas estatísticas!")
+				continue
+			}
+			handleStats(conn)
 		
+		case 9:
+			attemptReconnection(serverAddr, &conn)
+			
 		case 8:
 			fmt.Println("Você escolheu sair. Saindo...")
 			return
 			
 		default:
 			fmt.Println("Opção inválida!")
-			// Limpa o buffer em caso de entrada inválida
-			reader.ReadString('\n')
 		}
 	}
 }
@@ -156,15 +175,13 @@ func messageDistributor(conn net.Conn) {
 		}
 
 		switch message.Type {
-		case protocol.MSG_LOGIN_RESPONSE, protocol.MSG_REGISTER_RESPONSE, protocol.MSG_QUEUE_RESPONSE, protocol.MSG_PING_RESPONSE, protocol.MSG_STATS_RESPONSE:
-			// Mensagens síncronas - envia para canal síncrono
+		case protocol.MSG_LOGIN_RESPONSE, protocol.MSG_REGISTER_RESPONSE, protocol.MSG_QUEUE_RESPONSE, protocol.MSG_PING_RESPONSE, protocol.MSG_STATS_RESPONSE, protocol.MSG_CARD_PACK_RESPONSE:
 			select {
 			case syncResponseChan <- dataCopy:
 			case <-time.After(100 * time.Millisecond):
 				fmt.Printf("\n⚠️ Timeout ao enviar resposta síncrona\n")
 			}
 		case protocol.MSG_MATCH_FOUND, protocol.MSG_MATCH_START, protocol.MSG_MATCH_END, protocol.MSG_GAME_STATE, protocol.MSG_TURN_UPDATE:
-			// Mensagens assíncronas - envia para canal assíncrono
 			select {
 			case asyncMessageChan <- dataCopy:
 			case <-time.After(100 * time.Millisecond):
@@ -175,8 +192,24 @@ func messageDistributor(conn net.Conn) {
 		}
 	}
 
+	// NOVA PARTE: Quando sair do loop, conexão foi perdida
+	connectionMutex.Lock()
+	isConnected = false
+	connectionMutex.Unlock()
+
+	clearPlayerData()
+	
+	fmt.Println("\n🔴 ==========================================")
+	fmt.Println("        SERVIDOR DESCONECTADO")
+	fmt.Println("🔴 ==========================================")
+	fmt.Println("❌ Conexão com o servidor foi perdida")
+	fmt.Println("📋 Todos os dados foram perdidos no servidor")
+	fmt.Println("🔄 Você precisará se REGISTRAR novamente")
+	fmt.Println("💡 Use a opção 9 para reconectar")
+	fmt.Println("==========================================")
+	
 	if err := serverReader.Err(); err != nil {
-		fmt.Printf("\n🔴 Erro ao ler mensagens do servidor: %v\n", err)
+		fmt.Printf("   Detalhes do erro: %v\n", err)
 	}
 }
 
@@ -215,8 +248,29 @@ func waitForSyncResponse(timeout time.Duration) ([]byte, error) {
 	case data := <-syncResponseChan:
 		return data, nil
 	case <-time.After(timeout):
-		return nil, fmt.Errorf("timeout aguardando resposta do servidor")
+		connectionMutex.Lock()
+		connected := isConnected
+		connectionMutex.Unlock()
+		
+		if !connected {
+			return nil, fmt.Errorf("servidor desconectado - todos os dados foram perdidos")
+		}
+		return nil, fmt.Errorf("timeout - servidor não respondeu")
 	}
+}
+
+// Função helper para verificar conexão antes de fazer requisições
+func checkConnection() bool {
+	connectionMutex.Lock()
+	connected := isConnected
+	connectionMutex.Unlock()
+	
+	if !connected {
+		fmt.Println("❌ Não conectado ao servidor!")
+		fmt.Println("💡 Use a opção 9 para reconectar")
+		return false
+	}
+	return true
 }
 
 // Manipula notificação de partida encontrada
@@ -248,6 +302,9 @@ func handleGameState(message *protocol.Message) {
 		return
 	}
 
+	// NOVA PARTE: Atualiza flag de turno
+	isMyTurn = gameState.YourTurn
+
 	fmt.Printf("\n\n🎮 ===== ESTADO DO JOGO =====\n")
 	fmt.Printf("📝 %s\n", gameState.Message)
 	
@@ -258,7 +315,6 @@ func handleGameState(message *protocol.Message) {
 	}
 	
 	fmt.Printf("============================\n")
-	// Remove o "Pressione Enter para continuar" para evitar confusão
 }
 
 // Manipula atualização de turno
@@ -269,6 +325,9 @@ func handleTurnUpdate(message *protocol.Message) {
 		return
 	}
 
+	// NOVA PARTE: Atualiza flag de turno
+	isMyTurn = turnUpdate.YourTurn
+
 	fmt.Printf("\n\n🔄 ===== ATUALIZAÇÃO =====\n")
 	fmt.Printf("📝 %s\n", turnUpdate.Message)
 	
@@ -277,7 +336,6 @@ func handleTurnUpdate(message *protocol.Message) {
 	}
 	
 	fmt.Printf("========================\n")
-	// Remove o "Pressione Enter para continuar" para evitar confusão
 }
 
 // Manipula notificação de início de partida
@@ -294,9 +352,10 @@ func handleMatchStart(message *protocol.Message) {
 	fmt.Printf("⚔️ Que comece a batalha!\n")
 	fmt.Printf("📋 Use a opção 6 do menu quando for seu turno!\n")
 	fmt.Printf("===============================\n")
-	// Remove o "Pressione Enter para continuar" para evitar confusão
 	
 	inMatch = true
+	// NOVA PARTE: Inicializa o turno como false - será atualizado pelo GameState
+	isMyTurn = false
 }
 
 // Manipula notificação de fim de partida
@@ -319,46 +378,222 @@ func handleMatchEnd(message *protocol.Message) {
 	fmt.Printf("📝 %s\n", matchEnd.Message)
 	fmt.Printf("🔄 Voltando ao menu principal...\n")
 	fmt.Printf("=================================\n")
-	// Remove o "Pressione Enter para continuar" para evitar confusão
 	
 	inMatch = false
-	currentMatchID = 0 // Limpa o ID da partida
+	currentMatchID = 0
+	// NOVA PARTE: Reseta o turno
+	isMyTurn = false
 }
 
 func handleGameMove(conn net.Conn, reader *bufio.Reader) {
-	fmt.Println("\n--- FAZER JOGADA ---")
-	fmt.Print("Digite um número inteiro para jogar: ")
-	input, _ := reader.ReadString('\n')
-	input = strings.TrimSpace(input)
-	
-	number, err := strconv.Atoi(input)
-	if err != nil {
-		fmt.Println("❌ Por favor, digite um número válido!")
+	if !checkConnection(){
 		return
 	}
 
-	// Cria a mensagem de jogada
-	moveMessage, err := protocol.CreateGameMove(currentUserID, currentMatchID, number)
+	// NOVA VALIDAÇÃO: Verifica se é o turno do jogador
+	if !isMyTurn {
+		fmt.Println("❌ Não é seu turno! Aguarde o oponente jogar.")
+		fmt.Println("💡 Você será notificado quando for sua vez.")
+		return
+	}
+
+	// Verifica se tem cartas
+	hydra, quimera, gorgona := getCurrentPlayerCards()
+	if hydra == 0 && quimera == 0 && gorgona == 0 {
+		fmt.Println("❌ Você não tem cartas! Abra um pacote primeiro.")
+		return
+	}
+
+	fmt.Println("\n--- FAZER JOGADA COM CARTA ---")
+	fmt.Printf("📋 Seu inventário: HYDRA(%d) | QUIMERA(%d) | GORGONA(%d)\n", hydra, quimera, gorgona)
+	fmt.Println("Escolha uma carta para jogar:")
+	
+	// Mostra apenas cartas disponíveis
+	validChoices := make(map[int]string)
+	choiceNum := 1
+	
+	if hydra > 0 {
+		fmt.Printf("%d - HYDRA (devora QUIMERA) - Disponível: %d\n", choiceNum, hydra)
+		validChoices[choiceNum] = "HYDRA"
+		choiceNum++
+	}
+	
+	if quimera > 0 {
+		fmt.Printf("%d - QUIMERA (destrói GORGONA) - Disponível: %d\n", choiceNum, quimera)
+		validChoices[choiceNum] = "QUIMERA"
+		choiceNum++
+	}
+	
+	if gorgona > 0 {
+		fmt.Printf("%d - GORGONA (petrifica HYDRA) - Disponível: %d\n", choiceNum, gorgona)
+		validChoices[choiceNum] = "GORGONA"
+		choiceNum++
+	}
+	
+	fmt.Printf("Digite sua escolha (1-%d): ", len(validChoices))
+	
+	input, _ := reader.ReadString('\n')
+	input = strings.TrimSpace(input)
+	
+	choice, err := strconv.Atoi(input)
+	if err != nil || choice < 1 || choice > len(validChoices) {
+		fmt.Printf("❌ Por favor, digite uma opção válida (1-%d)!\n", len(validChoices))
+		return
+	}
+
+	cardType, exists := validChoices[choice]
+	if !exists {
+		fmt.Println("❌ Opção inválida!")
+		return
+	}
+
+	// Verifica novamente se tem a carta (double check)
+	if !hasCardType(cardType) {
+		fmt.Printf("❌ Você não possui cartas do tipo %s!\n", cardType)
+		return
+	}
+
+	// Cria a mensagem de jogada com carta
+	cardMoveMessage, err := protocol.CreateCardMove(currentUserID, currentMatchID, cardType)
 	if err != nil {
 		fmt.Println("Erro ao criar mensagem de jogada:", err)
 		return
 	}
 
 	// Adiciona quebra de linha
-	moveMessage = append(moveMessage, '\n')
+	cardMoveMessage = append(cardMoveMessage, '\n')
 
 	// Envia para o servidor
-	_, err = conn.Write(moveMessage)
+	_, err = conn.Write(cardMoveMessage)
 	if err != nil {
 		fmt.Println("Erro ao enviar jogada:", err)
 		return
 	}
 
-	fmt.Printf("✅ Jogada enviada: %d\n", number)
+	// Remove a carta do inventário local (otimista - assume que o servidor aceitará)
+	removeCardFromLocal(cardType)
+
+	// NOVA PARTE: Marca que não é mais o turno do jogador
+	isMyTurn = false
+
+	fmt.Printf("✅ Carta jogada: %s\n", cardType)
 	fmt.Println("⏳ Aguardando resposta do servidor...")
 }
 
+// função para lidar com pacotes de cartas
+func handleCardPack(conn net.Conn) {
+	if !checkConnection(){
+		return
+	}
+
+	// NOVA VALIDAÇÃO: Verifica se já tem cartas
+	hydra, quimera, gorgona := getCurrentPlayerCards()
+	totalCards := hydra + quimera + gorgona
+	
+	if totalCards > 0 {
+		fmt.Println("\n❌ VOCÊ JÁ POSSUI CARTAS!")
+		fmt.Printf("📋 Seu inventário atual: HYDRA(%d) | QUIMERA(%d) | GORGONA(%d)\n", hydra, quimera, gorgona)
+		fmt.Println("💡 Use suas cartas em partidas antes de abrir novos pacotes.")
+		fmt.Println("\nPressione Enter para continuar...")
+		bufio.NewReader(os.Stdin).ReadString('\n')
+		return
+	}
+
+	fmt.Println("\n--- ABRIR PACOTE DE CARTAS ---")
+	fmt.Println("🎒 Abrindo pacote de cartas...")
+
+	// Cria a mensagem de requisição de pacote
+	cardPackMessage, err := protocol.CreateCardPackRequest(currentUserID)
+	if err != nil {
+		fmt.Println("Erro ao criar mensagem de pacote de cartas:", err)
+		return
+	}
+
+	// Adiciona quebra de linha
+	cardPackMessage = append(cardPackMessage, '\n')
+
+	// Envia para o servidor
+	_, err = conn.Write(cardPackMessage)
+	if err != nil {
+		fmt.Println("Erro ao enviar requisição de pacote:", err)
+		return
+	}
+
+	// Aguarda resposta síncrona
+	responseData, err := waitForSyncResponse(5 * time.Second)
+	if err != nil {
+		fmt.Println("Erro:", err)
+		return
+	}
+
+	// Decodifica a resposta
+	message, err := protocol.DecodeMessage(responseData)
+	if err != nil {
+		fmt.Println("Erro ao decodificar resposta:", err)
+		return
+	}
+
+	// Processa resposta de pacote de cartas
+	if message.Type == protocol.MSG_CARD_PACK_RESPONSE {
+		cardPackResp, err := protocol.ExtractCardPackResponse(message)
+		if err != nil {
+			fmt.Println("Erro ao extrair resposta de pacote:", err)
+			return
+		}
+
+		if cardPackResp.Success {
+			fmt.Printf("✅ %s\n", cardPackResp.Message)
+			
+			if len(cardPackResp.Cards) > 0 {
+				// Atualiza o inventário local
+				updateLocalInventory(cardPackResp.Cards)
+				
+				fmt.Println("\n🃏 ===== SUAS CARTAS =====")
+				for i, card := range cardPackResp.Cards {
+					rarityEmoji := ""
+					switch card.Rarity {
+					case "comum":
+						rarityEmoji = "⚪"
+					case "raro":
+						rarityEmoji = "🔵"
+					case "épico":
+						rarityEmoji = "🟣"
+					}
+					fmt.Printf("%d. %s %s (%s)\n", i+1, rarityEmoji, card.Type, card.Rarity)
+				}
+				fmt.Println("========================")
+				
+				// Mostra inventário total
+				hydra, quimera, gorgona := getCurrentPlayerCards()
+				fmt.Printf("\n📋 SEU INVENTÁRIO TOTAL:\n")
+				fmt.Printf("⚪ HYDRA: %d cartas\n", hydra)
+				fmt.Printf("🔵 QUIMERA: %d cartas\n", quimera)
+				fmt.Printf("🟣 GORGONA: %d cartas\n", gorgona)
+				fmt.Printf("📊 Total: %d cartas\n", hydra+quimera+gorgona)
+			}
+			
+			// Mostra informações do estoque
+			stock := cardPackResp.StockInfo
+			fmt.Printf("\n📦 Estoque Global Restante:\n")
+			fmt.Printf("⚪ HYDRA: %d cartas\n", stock.HydraCount)
+			fmt.Printf("🔵 QUIMERA: %d cartas\n", stock.QuimeraCount)
+			fmt.Printf("🟣 GORGONA: %d cartas\n", stock.GorgonaCount)
+			fmt.Printf("📊 Total: %d cartas\n", stock.TotalCards)
+			
+		} else {
+			fmt.Printf("❌ %s\n", cardPackResp.Message)
+		}
+	}
+
+	fmt.Println("\nPressione Enter para continuar...")
+	bufio.NewReader(os.Stdin).ReadString('\n')
+}
+
 func handleQueue(conn net.Conn) {
+	if !checkConnection(){
+		return
+	}
+
 	fmt.Println("\n--- BUSCAR PARTIDA ---")
 	fmt.Println("Entrando na fila de partidas...")
 
@@ -413,6 +648,10 @@ func handleQueue(conn net.Conn) {
 }
 
 func handleRegister(conn net.Conn, reader *bufio.Reader) {
+	if !checkConnection(){
+		return
+	}
+
 	fmt.Println("\n--- CADASTRO ---")
 	fmt.Print("Insira um nome de usuário (mín. 3 caracteres): ")
 	userName, _ := reader.ReadString('\n')
@@ -483,6 +722,10 @@ func handleRegister(conn net.Conn, reader *bufio.Reader) {
 }
 
 func handleLogin(conn net.Conn, reader *bufio.Reader) {
+	if !checkConnection(){
+		return
+	}
+
 	fmt.Println("\n--- LOGIN ---")
 	fmt.Print("Insira seu nome de usuário: ")
 	userName, _ := reader.ReadString('\n')
@@ -543,6 +786,10 @@ func handleLogin(conn net.Conn, reader *bufio.Reader) {
 }
 
 func handleStats(conn net.Conn) {
+	if !checkConnection(){
+		return
+	}
+
 	fmt.Println("\n--- SUAS ESTATÍSTICAS ---")
 
 	// Cria a mensagem de requisição de estatísticas
@@ -605,6 +852,10 @@ func handleStats(conn net.Conn) {
 
 // Função de ping
 func handlePing(conn net.Conn) {
+	if !checkConnection(){
+		return
+	}
+
 	if !isLoggedIn {
 		fmt.Println("❌ Você precisa estar logado para verificar o ping!")
 		return
@@ -674,4 +925,95 @@ func handlePing(conn net.Conn) {
 	} else {
 		fmt.Printf("⚠️  Tipo de resposta inesperado: %s\n", message.Type)
 	}
+}
+
+// Função de reconexão
+func attemptReconnection(serverAddr string, conn *net.Conn) {
+	fmt.Println("\n🔄 =============================")
+	fmt.Println("     TENTANDO RECONECTAR...")
+	fmt.Println("===============================")
+	
+	// Fecha conexão anterior se ainda existe
+	if *conn != nil {
+		(*conn).Close()
+	}
+	
+	newConn, err := net.Dial("tcp", serverAddr)
+	if err != nil {
+		fmt.Printf("❌ Falha na reconexão: %v\n", err)
+		fmt.Println("💡 Verifique se o servidor está rodando")
+		return
+	}
+
+	*conn = newConn
+	
+	connectionMutex.Lock()
+	isConnected = true
+	connectionMutex.Unlock()
+	
+	fmt.Println("✅ Reconectado com sucesso!")
+	fmt.Println("📋 IMPORTANTE: Todos os dados foram perdidos")
+	fmt.Println("🔄 Você precisa se REGISTRAR novamente")
+	fmt.Println("===============================")
+	
+	// Reinicia goroutines
+	go messageDistributor(*conn)
+	go asyncMessageProcessor()
+}
+
+func updateLocalInventory(cards []protocol.CardInfo) {
+	playerInventory = append(playerInventory, cards...)
+}
+
+// Função para verificar cartas do jogador
+func getCurrentPlayerCards() (int, int, int) {
+	hydraCount := 0
+	quimeraCount := 0
+	gorgonaCount := 0
+	
+	for _, card := range playerInventory {
+		switch card.Type {
+		case "HYDRA":
+			hydraCount++
+		case "QUIMERA":
+			quimeraCount++
+		case "GORGONA":
+			gorgonaCount++
+		}
+	}
+	
+	return hydraCount, quimeraCount, gorgonaCount
+}
+
+func hasCardType(cardType string) bool {
+	for _, card := range playerInventory {
+		if card.Type == cardType {
+			return true
+		}
+	}
+	return false
+}
+
+// Função para remover carta do inventário local
+func removeCardFromLocal(cardType string) {
+	for i, card := range playerInventory {
+		if card.Type == cardType {
+			playerInventory = append(playerInventory[:i], playerInventory[i+1:]...)
+			break
+		}
+	}
+}
+
+func clearPlayerData() {
+	playerInventory = nil
+	isLoggedIn = false
+	inMatch = false
+	currentMatchID = 0
+	currentUserID = 0
+	isMyTurn = false
+}
+
+// Limpar terminal
+func clearScreen() {
+	fmt.Print("\033[2J\033[H")
 }

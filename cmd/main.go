@@ -1,8 +1,8 @@
 package main
 
 import (
-	"top-card/server"
-	"top-card/client"
+	"top-card/internal/server"
+	"top-card/internal/client"
 	"fmt"
 	"os"
 )

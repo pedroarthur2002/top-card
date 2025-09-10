@@ -7,12 +7,13 @@ import (
 	"strings"
 	"sync"
 	"time"
-	"top-card/Player"
-	"top-card/protocol"
-	"top-card/match"
+	"top-card/internal/player"
+	"top-card/internal/protocol"
+	"top-card/internal/match"
+	"top-card/internal/card"
 )
 
-var players []Player.Player
+var players []player.Player
 var nextID = 1
 var queue []int // Fila de jogadores esperando partida
 var queueMutex sync.Mutex
@@ -34,6 +35,8 @@ func Run() {
 
 	// Inicia o matchmaker em uma goroutine separada
 	go matchmaker()
+
+	go cleanupOrphanedMatches()
 
 	for {
 		conn, err := ln.Accept()
@@ -134,7 +137,7 @@ func notifyMatchStart(player1ID, player2ID, matchID int) {
 		}
 		
 		// Envia estado do jogo indicando que é o turno do Player1
-		gameState, err := protocol.CreateGameState(matchID, "É seu turno! Digite um número para jogar.", true, false, false)
+		gameState, err := protocol.CreateGameState(matchID, "É seu turno! Escolha uma carta para jogar.", true, false, false)
 		if err == nil {
 			gameState = append(gameState, '\n')
 			conn1.Write(gameState)
@@ -154,13 +157,14 @@ func notifyMatchStart(player1ID, player2ID, matchID int) {
 		}
 		
 		// Envia estado do jogo indicando que deve aguardar
-		gameState, err := protocol.CreateGameState(matchID, "Aguardando o oponente jogar primeiro...", false, false, false)
+		gameState, err := protocol.CreateGameState(matchID, "Aguardando o oponente escolher uma carta...", false, false, false)
 		if err == nil {
 			gameState = append(gameState, '\n')
 			conn2.Write(gameState)
 		}
 	}
 }
+
 
 func handleConnection(conn net.Conn) {
 	defer func() {
@@ -215,10 +219,12 @@ func handleConnection(conn net.Conn) {
 			handleQueue(conn, message)
 		case protocol.MSG_PING_REQUEST:
 			handlePing(conn, message)
-		case protocol.MSG_GAME_MOVE:
-			handleGameMove(conn, message)
 		case protocol.MSG_STATS_REQUEST:  
 			handleStats(conn, message)
+		case protocol.MSG_CARD_PACK_REQUEST:
+			handleCardPack(conn, message)
+		case protocol.MSG_CARD_MOVE:
+			handleCardMove(conn, message)
 		default:
 			fmt.Println("Tipo de mensagem não reconhecido:", message.Type)
 		}
@@ -238,14 +244,25 @@ func notifyMatchEnd(player1ID, player2ID int, currentMatch *match.Match) {
 		winnerName = currentMatch.Player2.GetUserName()
 	}
 	
-	player1Num := *currentMatch.Player1Number
-	player2Num := *currentMatch.Player2Number
+	// Obtém as cartas jogadas (agora são cartas, não números)
+	var player1Card, player2Card string
+	if currentMatch.Player1Card != nil {
+		player1Card = currentMatch.Player1Card.Type
+	} else {
+		player1Card = "NENHUMA"
+	}
 	
-	message := fmt.Sprintf("Jogo finalizado! %s vs %s: %d vs %d", 
-		currentMatch.Player1.GetUserName(), currentMatch.Player2.GetUserName(), 
-		player1Num, player2Num)
+	if currentMatch.Player2Card != nil {
+		player2Card = currentMatch.Player2Card.Type
+	} else {
+		player2Card = "NENHUMA"
+	}
 	
-	// NOVA PARTE: Atualiza as estatísticas dos jogadores
+	message := fmt.Sprintf("Jogo finalizado! %s jogou %s vs %s jogou %s", 
+		currentMatch.Player1.GetUserName(), player1Card,
+		currentMatch.Player2.GetUserName(), player2Card)
+	
+	// Atualiza as estatísticas dos jogadores
 	updatePlayerStats(currentMatch.Player1.GetID(), currentMatch.Player2.GetID(), currentMatch.Winner)
 	
 	// Notifica jogador 1
@@ -301,23 +318,23 @@ func updatePlayerStats(player1ID, player2ID, winnerID int) {
 
 
 // função para lidar com jogadas no servidor
-func handleGameMove(conn net.Conn, message *protocol.Message) {
-	// Extrai os dados da jogada
-	gameMove, err := protocol.ExtractGameMove(message)
+func handleCardMove(conn net.Conn, message *protocol.Message) {
+	// Extrai os dados da jogada com carta
+	cardMove, err := protocol.ExtractCardMove(message)
 	if err != nil {
-		fmt.Println("Erro ao extrair dados da jogada:", err)
+		fmt.Println("Erro ao extrair dados da jogada de carta:", err)
 		return
 	}
 
-	fmt.Printf("Jogada recebida - Usuário: %d, Partida: %d, Número: %d\n", 
-		gameMove.UserID, gameMove.MatchID, gameMove.Number)
+	fmt.Printf("Jogada de carta recebida - Usuário: %d, Partida: %d, Carta: %s\n", 
+		cardMove.UserID, cardMove.MatchID, cardMove.CardType)
 
-	// Processa a jogada - CORREÇÃO AQUI
-	success, responseMessage := match.GetManager().MakeMove(gameMove.MatchID, gameMove.UserID, gameMove.Number)
+	// Processa a jogada de carta
+	success, responseMessage := match.GetManager().MakeCardMove(cardMove.MatchID, cardMove.UserID, cardMove.CardType)
 	
 	if !success {
 		// Envia mensagem de erro para o jogador
-		response, err := protocol.CreateGameState(gameMove.MatchID, responseMessage, false, false, false)
+		response, err := protocol.CreateGameState(cardMove.MatchID, responseMessage, false, false, false)
 		if err != nil {
 			fmt.Printf("Erro ao criar resposta de erro: %v\n", err)
 			return
@@ -329,9 +346,9 @@ func handleGameMove(conn net.Conn, message *protocol.Message) {
 	}
 
 	// Se a jogada foi bem-sucedida, verifica o estado da partida
-	currentMatch := match.GetManager().GetMatch(gameMove.MatchID)
+	currentMatch := match.GetManager().GetMatch(cardMove.MatchID)
 	if currentMatch == nil {
-		fmt.Printf("Partida %d não encontrada\n", gameMove.MatchID)
+		fmt.Printf("Partida %d não encontrada\n", cardMove.MatchID)
 		return
 	}
 
@@ -342,6 +359,97 @@ func handleGameMove(conn net.Conn, message *protocol.Message) {
 	} else {
 		// Notifica atualização de turno para ambos jogadores
 		go notifyTurnUpdate(currentMatch)
+	}
+}
+
+func handleCardPack(conn net.Conn, message *protocol.Message) {
+	// Extrai os dados da requisição de pacote
+	cardPackReq, err := protocol.ExtractCardPackRequest(message)
+	if err != nil {
+		fmt.Println("Erro ao extrair dados de pacote de cartas:", err)
+		return
+	}
+
+	fmt.Printf("Requisição de pacote de cartas - UserID: %d\n", cardPackReq.UserID)
+
+	// Verifica se o usuário está conectado
+	connectedMutex.Lock()
+	isConnected := connectedUsers[cardPackReq.UserID]
+	connectedMutex.Unlock()
+
+	var response []byte
+
+	if !isConnected {
+		// Usuário não está conectado/autenticado
+		response, err = protocol.CreateCardPackResponse(false, "Usuário não está conectado!", nil, protocol.StockInfo{})
+		fmt.Printf("Pacote de cartas negado - usuário %d não está conectado\n", cardPackReq.UserID)
+	} else {
+		// Busca o player
+		foundPlayer, found := findPlayerByID(cardPackReq.UserID)
+		if !found {
+			response, err = protocol.CreateCardPackResponse(false, "Usuário não encontrado!", nil, protocol.StockInfo{})
+			fmt.Printf("Pacote de cartas negado - usuário %d não encontrado\n", cardPackReq.UserID)
+		} else {
+			// NOVA VALIDAÇÃO: Verifica se o jogador já tem cartas
+			if foundPlayer.GetInventorySize() > 0 {
+				hydra, quimera, gorgona := foundPlayer.CountCardsByType()
+				message := fmt.Sprintf("Você já possui %d cartas! Use-as em partidas antes de abrir novos pacotes.", foundPlayer.GetInventorySize())
+				response, err = protocol.CreateCardPackResponse(false, message, nil, protocol.StockInfo{})
+				fmt.Printf("Pacote de cartas negado - usuário %d já possui cartas (H:%d Q:%d G:%d)\n", 
+					cardPackReq.UserID, hydra, quimera, gorgona)
+			} else {
+				// Tenta abrir um pacote de cartas
+				cards, success := card.OpenCardPack()
+				if !success {
+					response, err = protocol.CreateCardPackResponse(false, "Estoque insuficiente! Tente novamente mais tarde.", nil, protocol.StockInfo{})
+					fmt.Printf("Pacote de cartas negado - estoque insuficiente para usuário %d\n", cardPackReq.UserID)
+				} else {
+					// Adiciona as cartas ao inventário do jogador
+					for i := range players {
+						if players[i].GetID() == cardPackReq.UserID {
+							players[i].AddCards(cards)
+							break
+						}
+					}
+
+					// Converte cartas para protocol.CardInfo
+					var cardInfos []protocol.CardInfo
+					for _, c := range cards {
+						cardInfos = append(cardInfos, protocol.CardInfo{
+							Type:   c.Type,
+							Rarity: c.Rarity,
+						})
+					}
+
+					// Obtém informações do estoque
+					hydra, quimera, gorgona, total := card.GetStockInfo()
+					stockInfo := protocol.StockInfo{
+						HydraCount:   hydra,
+						QuimeraCount: quimera,
+						GorgonaCount: gorgona,
+						TotalCards:   total,
+					}
+
+					message := fmt.Sprintf("Pacote aberto com sucesso! Você recebeu %d cartas. Agora você deve usá-las antes de abrir outro pacote.", len(cards))
+					response, err = protocol.CreateCardPackResponse(true, message, cardInfos, stockInfo)
+					
+					fmt.Printf("Pacote de cartas aberto para usuário %d: %v (inventário: %d cartas)\n", 
+						cardPackReq.UserID, cardInfos, foundPlayer.GetInventorySize()+len(cards))
+				}
+			}
+		}
+	}
+
+	if err != nil {
+		fmt.Println("Erro ao criar resposta de pacote de cartas:", err)
+		return
+	}
+
+	// Envia a resposta
+	response = append(response, '\n')
+	_, err = conn.Write(response)
+	if err != nil {
+		fmt.Println("Erro ao enviar resposta de pacote de cartas:", err)
 	}
 }
 
@@ -359,9 +467,9 @@ func notifyTurnUpdate(currentMatch *match.Match) {
 		isPlayer1Turn := currentMatch.CurrentTurn == player1ID
 		var message string
 		if isPlayer1Turn {
-			message = "É seu turno! Digite um número para jogar."
+			message = "É seu turno! Escolha uma carta para jogar."
 		} else {
-			message = "Jogada realizada! Aguardando oponente..."
+			message = "Carta jogada! Aguardando oponente..."
 		}
 		
 		response, err := protocol.CreateTurnUpdate(currentMatch.ID, message, isPlayer1Turn)
@@ -380,9 +488,9 @@ func notifyTurnUpdate(currentMatch *match.Match) {
 		isPlayer2Turn := currentMatch.CurrentTurn == player2ID
 		var message string
 		if isPlayer2Turn {
-			message = "É seu turno! Digite um número para jogar."
+			message = "É seu turno! Escolha uma carta para jogar."
 		} else {
-			message = "Jogada realizada! Aguardando oponente..."
+			message = "Carta jogada! Aguardando oponente..."
 		}
 		
 		response, err := protocol.CreateTurnUpdate(currentMatch.ID, message, isPlayer2Turn)
@@ -426,10 +534,39 @@ func handleQueue(conn net.Conn, message *protocol.Message) {
 		response, err = protocol.CreateQueueResponse(false, "Você já está na fila!", len(queue))
 		fmt.Printf("Jogador %d já está na fila\n", queueReq.UserID)
 	} else {
-		// Adiciona o jogador à fila
-		queue = append(queue, queueReq.UserID)
-		response, err = protocol.CreateQueueResponse(true, "Você foi adicionado à fila de partidas!", len(queue))
-		fmt.Printf("Jogador %d adicionado à fila. Total na fila: %d\n", queueReq.UserID, len(queue))
+		// VALIDAÇÃO ATUALIZADA: Busca o player mais recente e verifica cartas
+		var foundPlayer *player.Player
+		found := false
+		
+		// Busca o player atualizado no slice global
+		for i := range players {
+			if players[i].GetID() == queueReq.UserID {
+				foundPlayer = &players[i]
+				found = true
+				break
+			}
+		}
+		
+		if !found {
+			response, err = protocol.CreateQueueResponse(false, "Jogador não encontrado!", len(queue))
+			fmt.Printf("Jogador %d não encontrado\n", queueReq.UserID)
+		} else {
+			// Verifica cartas em tempo real
+			currentInventorySize := foundPlayer.GetInventorySize()
+			hydra, quimera, gorgona := foundPlayer.CountCardsByType()
+			
+			if currentInventorySize == 0 {
+				response, err = protocol.CreateQueueResponse(false, "Você não tem cartas! Abra um pacote primeiro para jogar.", len(queue))
+				fmt.Printf("Jogador %d tentou entrar na fila SEM cartas (H:%d Q:%d G:%d)\n", 
+					queueReq.UserID, hydra, quimera, gorgona)
+			} else {
+				// Adiciona o jogador à fila
+				queue = append(queue, queueReq.UserID)
+				response, err = protocol.CreateQueueResponse(true, "Você foi adicionado à fila de partidas!", len(queue))
+				fmt.Printf("Jogador %d adicionado à fila. Total na fila: %d (cartas: H:%d Q:%d G:%d = %d total)\n", 
+					queueReq.UserID, len(queue), hydra, quimera, gorgona, currentInventorySize)
+			}
+		}
 	}
 
 	if err != nil {
@@ -470,7 +607,7 @@ func handleRegister(conn net.Conn, message *protocol.Message) {
 		fmt.Printf("Cadastro falhou - senha muito curta para usuário: %s\n", registerReq.UserName)
 	} else {
 		// Cria novo player
-		newPlayer := Player.NewPlayer(nextID, registerReq.UserName, registerReq.Password)
+		newPlayer := player.NewPlayer(nextID, registerReq.UserName, registerReq.Password)
 		players = append(players, newPlayer)
 		
 		response, err = protocol.CreateRegisterResponse(true, "Cadastro realizado com sucesso!", nextID)
@@ -660,21 +797,86 @@ func userExists(userName string) bool {
 }
 
 // Função para buscar um player pelos credentials
-func findPlayer(userName, password string) (Player.Player, bool) {
+func findPlayer(userName, password string) (player.Player, bool) {
 	for _, player := range players {
 		if player.GetUserName() == userName && player.GetPassword() == password {
 			return player, true
 		}
 	}
-	return Player.Player{}, false
+	return player.Player{}, false
 }
 
 // Função para buscar um player pelo ID
-func findPlayerByID(playerID int) (Player.Player, bool) {
-	for _, player := range players {
-		if player.GetID() == playerID {
-			return player, true
+func findPlayerByID(playerID int) (*player.Player, bool) {
+    for i := range players {
+        if players[i].GetID() == playerID {
+            return &players[i], true  // Retorna PONTEIRO para o original
+        }
+    }
+    return nil, false
+}
+
+func cleanupOrphanedMatches() {
+	ticker := time.NewTicker(5 * time.Second) // Verifica a cada 5 segundos
+	defer ticker.Stop()
+
+	for range ticker.C {
+		// Obtém todas as partidas ativas
+		activeMatches := match.GetManager().GetAllActiveMatches()
+		
+		connectionsMutex.Lock()
+		connectedMutex.Lock()
+		
+		for _, currentMatch := range activeMatches {
+			player1ID := currentMatch.Player1.GetID()
+			player2ID := currentMatch.Player2.GetID()
+			
+			player1Connected := connectedUsers[player1ID]
+			player2Connected := connectedUsers[player2ID]
+			
+			// Se ambos jogadores desconectaram, cancela a partida
+			if !player1Connected && !player2Connected {
+				fmt.Printf("🧹 Partida %d cancelada - ambos jogadores desconectaram\n", currentMatch.ID)
+				match.GetManager().CancelMatch(currentMatch.ID)
+				continue
+			}
+			
+			// Se apenas um jogador desconectou, declara o outro vencedor
+			if !player1Connected && player2Connected {
+				fmt.Printf("🏆 Player 2 vence partida %d por desconexão do oponente\n", currentMatch.ID)
+				match.GetManager().ForceWin(currentMatch.ID, currentMatch.Player2.GetID())
+				
+				// Atualiza estatísticas
+				updatePlayerStats(currentMatch.Player1.GetID(), currentMatch.Player2.GetID(), currentMatch.Player2.GetID())
+				
+				// Notifica o jogador restante
+				if conn, exists := userConnections[currentMatch.Player2.GetID()]; exists {
+					message := "Seu oponente desconectou. Você venceu por abandono!"
+					response, _ := protocol.CreateMatchEnd(currentMatch.ID, currentMatch.Player2.GetID(), 
+						currentMatch.Player2.GetUserName(), message)
+					response = append(response, '\n')
+					conn.Write(response)
+				}
+				
+			} else if player1Connected && !player2Connected {
+				fmt.Printf("🏆 Player 1 vence partida %d por desconexão do oponente\n", currentMatch.ID)
+				match.GetManager().ForceWin(currentMatch.ID, currentMatch.Player1.GetID())
+				
+				// Atualiza estatísticas
+				updatePlayerStats(currentMatch.Player1.GetID(), currentMatch.Player2.GetID(), currentMatch.Player1.GetID())
+				
+				// Notifica o jogador restante
+				if conn, exists := userConnections[currentMatch.Player1.GetID()]; exists {
+					message := "Seu oponente desconectou. Você venceu por abandono!"
+					response, _ := protocol.CreateMatchEnd(currentMatch.ID, currentMatch.Player1.GetID(), 
+						currentMatch.Player1.GetUserName(), message)
+					response = append(response, '\n')
+					conn.Write(response)
+				}
+			}
 		}
+		
+		connectedMutex.Unlock()
+		connectionsMutex.Unlock()
 	}
-	return Player.Player{}, false
 }

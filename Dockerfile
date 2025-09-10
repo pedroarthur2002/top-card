@@ -10,7 +10,7 @@ COPY . .
 RUN go mod tidy
 
 # Compila o binário único a partir do main.go
-RUN go build -o app ./main.go
+RUN go build -o app ./cmd/main.go
 
 # === Etapa 2: imagem final mínima ===
 FROM alpine:3.18

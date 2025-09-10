@@ -22,12 +22,50 @@ const (
 	MSG_TURN_UPDATE   = "TURN_UPDATE"
 	MSG_STATS_REQUEST  = "STATS_REQUEST"
 	MSG_STATS_RESPONSE = "STATS_RESPONSE"
+	MSG_CARD_PACK_REQUEST  = "CARD_PACK_REQUEST"
+	MSG_CARD_PACK_RESPONSE = "CARD_PACK_RESPONSE"
+	MSG_CARD_MOVE         = "CARD_MOVE"
 )
 
 // Estrutura base para todas as mensagens
 type Message struct {
 	Type string      `json:"type"`
 	Data interface{} `json:"data"`
+}
+
+// Estrutura para requisição de pacote de cartas
+type CardPackRequest struct {
+	UserID int `json:"user_id"`
+}
+
+
+// Estrutura para resposta de pacote de cartas
+type CardPackResponse struct {
+	Success   bool        `json:"success"`
+	Message   string      `json:"message"`
+	Cards     []CardInfo  `json:"cards,omitempty"`
+	StockInfo StockInfo   `json:"stock_info,omitempty"`
+}
+
+// Estrutura para informações de carta
+type CardInfo struct {
+	Type   string `json:"type"`
+	Rarity string `json:"rarity"`
+}
+
+// Estrutura para informações do estoque
+type StockInfo struct {
+	HydraCount   int `json:"hydra_count"`
+	QuimeraCount int `json:"quimera_count"`
+	GorgonaCount int `json:"gorgona_count"`
+	TotalCards   int `json:"total_cards"`
+}
+
+// Estrutura para jogada com carta
+type CardMove struct {
+	UserID   int    `json:"user_id"`
+	MatchID  int    `json:"match_id"`
+	CardType string `json:"card_type"`
 }
 
 // Estrutura para resposta de estatísticas
@@ -118,9 +156,9 @@ type MatchEnd struct {
 
 // Estrutura para jogada do jogo
 type GameMove struct {
-	UserID  int `json:"user_id"`
-	MatchID int `json:"match_id"`
-	Number  int `json:"number"`
+	UserID   int    `json:"user_id"`
+	MatchID  int    `json:"match_id"`
+	CardType string `json:"card_type"` 
 }
 
 // Estrutura para estado do jogo
@@ -151,6 +189,101 @@ func CreateStatsRequest(userID int) ([]byte, error) {
 	}
 
 	return json.Marshal(message)
+}
+
+// Função para criar mensagem de requisição de pacote de cartas
+func CreateCardPackRequest(userID int) ([]byte, error) {
+	cardPackReq := CardPackRequest{
+		UserID: userID,
+	}
+
+	message := Message{
+		Type: MSG_CARD_PACK_REQUEST,
+		Data: cardPackReq,
+	}
+
+	return json.Marshal(message)
+}
+
+// Função para criar mensagem de resposta de pacote de cartas
+func CreateCardPackResponse(success bool, message string, cards []CardInfo, stockInfo StockInfo) ([]byte, error) {
+	cardPackResp := CardPackResponse{
+		Success:   success,
+		Message:   message,
+		Cards:     cards,
+		StockInfo: stockInfo,
+	}
+
+	msg := Message{
+		Type: MSG_CARD_PACK_RESPONSE,
+		Data: cardPackResp,
+	}
+
+	return json.Marshal(msg)
+}
+
+// Função para criar mensagem de jogada com carta
+func CreateCardMove(userID, matchID int, cardType string) ([]byte, error) {
+	cardMove := CardMove{
+		UserID:   userID,
+		MatchID:  matchID,
+		CardType: cardType,
+	}
+
+	message := Message{
+		Type: MSG_CARD_MOVE,
+		Data: cardMove,
+	}
+
+	return json.Marshal(message)
+}
+
+// Função para extrair dados de requisição de pacote de cartas
+func ExtractCardPackRequest(message *Message) (*CardPackRequest, error) {
+	dataBytes, err := json.Marshal(message.Data)
+	if err != nil {
+		return nil, err
+	}
+
+	var cardPackReq CardPackRequest
+	err = json.Unmarshal(dataBytes, &cardPackReq)
+	if err != nil {
+		return nil, err
+	}
+
+	return &cardPackReq, nil
+}
+
+// Função para extrair dados de resposta de pacote de cartas
+func ExtractCardPackResponse(message *Message) (*CardPackResponse, error) {
+	dataBytes, err := json.Marshal(message.Data)
+	if err != nil {
+		return nil, err
+	}
+
+	var cardPackResp CardPackResponse
+	err = json.Unmarshal(dataBytes, &cardPackResp)
+	if err != nil {
+		return nil, err
+	}
+
+	return &cardPackResp, nil
+}
+
+// Função para extrair dados de jogada com carta
+func ExtractCardMove(message *Message) (*CardMove, error) {
+	dataBytes, err := json.Marshal(message.Data)
+	if err != nil {
+		return nil, err
+	}
+
+	var cardMove CardMove
+	err = json.Unmarshal(dataBytes, &cardMove)
+	if err != nil {
+		return nil, err
+	}
+
+	return &cardMove, nil
 }
 
 // Função para criar mensagem de resposta de estatísticas
@@ -560,21 +693,6 @@ func ExtractMatchEnd(message *Message) (*MatchEnd, error) {
 	return &matchEnd, nil
 }
 
-// Função para criar mensagem de jogada
-func CreateGameMove(userID, matchID, number int) ([]byte, error) {
-	gameMove := GameMove{
-		UserID:  userID,
-		MatchID: matchID,
-		Number:  number,
-	}
-	
-	message := Message{
-		Type: MSG_GAME_MOVE,
-		Data: gameMove,
-	}
-	
-	return json.Marshal(message)
-}
 
 // Função para criar mensagem de estado do jogo
 func CreateGameState(matchID int, message string, yourTurn, opponentMoved, gameOver bool) ([]byte, error) {
