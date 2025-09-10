@@ -63,7 +63,7 @@ docker-compose up server
 docker-compose run --rm -e SERVER_ADDR=192.168.1.102:8080 client
 ```
 
-> Substitua o IP `192.168.1.102``pelo IP da máquina onde o servidor está rodando
+> Substitua o IP `192.168.1.102` pelo IP da máquina onde o servidor está rodando
 
 ## Estrutura do projeto
 
