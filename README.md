@@ -29,9 +29,41 @@ docker-compose up server
 ```
 
 4. Execute o cliente:
+
 ``` bash
 docker-compose run --rm client
 ```
+
+### Execução distribuída
+
+Caso queira executar o cliente numa máquina e os clientes em diferentes máquinas:
+
+1. Descubra o IP local:
+
+- Windows (É o endereço IPv4)
+
+``` powershell
+ipconfig
+```
+
+- Linux
+``` bash
+ipp addr show
+```
+
+2. Execute o servidor: 
+
+``` bash
+docker-compose up server
+```
+
+3. Execute o cliente
+
+``` bash
+docker-compose run --rm -e SERVER_ADDR=192.168.1.102:8080 client
+```
+
+> Substitua o IP `192.168.1.102``pelo IP da máquina onde o servidor está rodando
 
 ## Estrutura do projeto
 
