@@ -1,21 +1,54 @@
 # TOP CARD
 
-### Executar com Docker
+Este é um jogo de cartas 1v1 para a disciplina **TEC502 - Concorrência e Conectividade**. O sistema utiliza conceitos de programação concorrente, comunicação em rede e sincronização de estado entre clientes conectados.
 
-- Fazer o *build*:
-``` powershell
+## Tecnologias
+
+- **Go**
+- **Docker** e **Docker Compose**
+
+## Como Executar
+
+1. Clone o repositório:
+
+```bash
+git clone https://github.com/pedroarthur2002/top-card
+cd top-card
+```
+
+2. Faça o *build* da imagem:
+
+``` bash
 docker-compose build
 ```
 
-- Executar o servidor:
- ``` powershell
+3. Execute o servidor:
+
+``` bash
 docker-compose up server
 ```
 
-- Executar o *client*
-``` powershell
+4. Execute o cliente:
+``` bash
 docker-compose run --rm client
 ```
+
+## Estrutura do projeto
+
+```
+.
+├── cmd/                # Aplicação principal
+├── internal/           # Código privado da aplicação
+├── docker-compose.yml
+├── Dockerfile
+├── go.mod
+├── go.sum
+└── README.md
+```
+
+## 🧪 Testes
+
+*Fazer essa parte ainda*
 
 ### Executar localmente (no powershell)
 Rodar o servidor
