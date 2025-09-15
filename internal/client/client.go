@@ -194,7 +194,7 @@ func messageDistributor(conn net.Conn) {
 		}
 	}
 
-	// NOVA PARTE: Quando sair do loop, conexão foi perdida
+	// Quando sair do loop, conexão foi perdida
 	connectionMutex.Lock()
 	isConnected = false
 	connectionMutex.Unlock()
@@ -304,7 +304,7 @@ func handleGameState(message *protocol.Message) {
 		return
 	}
 
-	// NOVA PARTE: Atualiza flag de turno
+	// Atualiza flag de turno
 	isMyTurn = gameState.YourTurn
 
 	fmt.Printf("\n\n🎮 ===== ESTADO DO JOGO =====\n")
@@ -327,7 +327,7 @@ func handleTurnUpdate(message *protocol.Message) {
 		return
 	}
 
-	// NOVA PARTE: Atualiza flag de turno
+	// Atualiza flag de turno
 	isMyTurn = turnUpdate.YourTurn
 
 	fmt.Printf("\n\n🔄 ===== ATUALIZAÇÃO =====\n")
@@ -356,7 +356,7 @@ func handleMatchStart(message *protocol.Message) {
 	fmt.Printf("===============================\n")
 	
 	inMatch = true
-	// NOVA PARTE: Inicializa o turno como false - será atualizado pelo GameState
+	// Inicializa o turno como false - será atualizado pelo GameState
 	isMyTurn = false
 }
 
@@ -383,7 +383,7 @@ func handleMatchEnd(message *protocol.Message) {
 	
 	inMatch = false
 	currentMatchID = 0
-	// NOVA PARTE: Reseta o turno
+	// Reseta o turno
 	isMyTurn = false
 }
 
@@ -392,7 +392,7 @@ func handleGameMove(conn net.Conn, reader *bufio.Reader) {
 		return
 	}
 
-	// NOVA VALIDAÇÃO: Verifica se é o turno do jogador
+	// Verifica se é o turno do jogador
 	if !isMyTurn {
 		fmt.Println("❌ Não é seu turno! Aguarde o oponente jogar.")
 		fmt.Println("💡 Você será notificado quando for sua vez.")
@@ -472,10 +472,10 @@ func handleGameMove(conn net.Conn, reader *bufio.Reader) {
 		return
 	}
 
-	// Remove a carta do inventário local (otimista - assume que o servidor aceitará)
+	// Remove a carta do inventário local
 	removeCardFromLocal(cardType)
 
-	// NOVA PARTE: Marca que não é mais o turno do jogador
+	// Marca que não é mais o turno do jogador
 	isMyTurn = false
 
 	fmt.Printf("✅ Carta jogada: %s\n", cardType)
@@ -488,7 +488,7 @@ func handleCardPack(conn net.Conn) {
 		return
 	}
 
-	// NOVA VALIDAÇÃO: Verifica se já tem cartas
+	// Verifica se já tem cartas
 	hydra, quimera, gorgona := getCurrentPlayerCards()
 	totalCards := hydra + quimera + gorgona
 	

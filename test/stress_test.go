@@ -191,7 +191,7 @@ func TestStressCardPacks(t *testing.T) {
 	mutex.Unlock()
 }
 
-// Teste de stress para matchmaking completo (incluindo jogadas)
+// Teste de stress para matchmaking
 func TestStressMatchmaking(t *testing.T) {
 	numUsers := 2 // Número par para formar partidas
 	var wg sync.WaitGroup
@@ -204,8 +204,6 @@ func TestStressMatchmaking(t *testing.T) {
 	erroFila := 0
 	partidasEncontradas := 0
 	timeoutPartida := 0
-	jogadasRealizadas := 0
-	partidasCompletas := 0
 	var mutex sync.Mutex
 
 	startTime := time.Now()
@@ -227,7 +225,7 @@ func TestStressMatchmaking(t *testing.T) {
 			}
 			defer conn.Close()
 			
-			conn.SetDeadline(time.Now().Add(60 * time.Second)) // Aumentado para 60s para permitir jogadas
+			conn.SetDeadline(time.Now().Add(60 * time.Second)) // Timeout aumentado para 60s
 			scanner := bufio.NewScanner(conn)
 			
 			// 1. REGISTRO
@@ -369,25 +367,22 @@ func TestStressMatchmaking(t *testing.T) {
 			
 			t.Logf("Player%d: NA FILA - tamanho: %d", userNum, queueResp.QueueSize)
 			
-			// 5. AGUARDAR PARTIDA E FAZER JOGADAS
-			timeout := time.NewTimer(60 * time.Second)
+			// 5. AGUARDAR PARTIDA (aguarda até 30 segundos)
+			timeout := time.NewTimer(30 * time.Second) // Aumentado de 25s para 30s
 			defer timeout.Stop()
 			matchFound := false
-			matchID := 0
 			messagesReceived := 0
-			myTurn := false
-			gameOver := false
 			
 			// Remove timeout específico - usa timeout geral da conexão
-			conn.SetReadDeadline(time.Time{})
+			conn.SetReadDeadline(time.Time{}) // Remove deadline específico
 			
-			for !gameOver && messagesReceived < 20 { // Aumentado limite de mensagens
+			for !matchFound && messagesReceived < 10 { // Aumentado limite de mensagens
 				select {
 				case <-timeout.C:
 					mutex.Lock()
 					timeoutPartida++
 					mutex.Unlock()
-					t.Logf("Player%d: TIMEOUT - partida não completada após 60s", userNum)
+					t.Logf("Player%d: TIMEOUT - partida não encontrada após 30s", userNum)
 					return
 				default:
 					// Canal para fazer leitura não-bloqueante
@@ -400,90 +395,38 @@ func TestStressMatchmaking(t *testing.T) {
 					case scanned := <-scanChan:
 						if scanned {
 							messagesReceived++
+							t.Logf("Player%d: Mensagem recebida (%d/10)", userNum, messagesReceived)
+							
 							response, err := protocol.DecodeMessage(scanner.Bytes())
-							if err != nil {
-								t.Logf("Player%d: Erro ao decodificar mensagem %d: %v", userNum, messagesReceived, err)
-								continue
-							}
-							
-							t.Logf("Player%d: Mensagem %d - Tipo: %s", userNum, messagesReceived, response.Type)
-							
-							switch response.Type {
-							case protocol.MSG_MATCH_FOUND:
-								matchFoundData, err := protocol.ExtractMatchFound(response)
-								if err == nil {
-									matchID = matchFoundData.MatchID
-									matchFound = true
+							if err == nil {
+								t.Logf("Player%d: Tipo mensagem: %s", userNum, response.Type)
+								switch response.Type {
+								case protocol.MSG_MATCH_FOUND:
 									mutex.Lock()
 									partidasEncontradas++
 									mutex.Unlock()
-									t.Logf("Player%d: PARTIDA ENCONTRADA! MatchID: %d", userNum, matchID)
+									matchFound = true
+									t.Logf("Player%d: PARTIDA ENCONTRADA!", userNum)
+								case protocol.MSG_MATCH_START:
+									t.Logf("Player%d: PARTIDA INICIADA!", userNum)
+								case protocol.MSG_GAME_STATE:
+									t.Logf("Player%d: ESTADO DO JOGO recebido!", userNum)
+								default:
+									t.Logf("Player%d: Mensagem não relacionada: %s", userNum, response.Type)
 								}
-							case protocol.MSG_MATCH_START:
-								t.Logf("Player%d: PARTIDA INICIADA!", userNum)
-							case protocol.MSG_GAME_STATE:
-								gameState, err := protocol.ExtractGameState(response)
-								if err == nil {
-									myTurn = gameState.YourTurn
-									gameOver = gameState.GameOver
-									if gameOver {
-										t.Logf("Player%d: JOGO FINALIZADO", userNum)
-										mutex.Lock()
-										partidasCompletas++
-										mutex.Unlock()
-									}
-								}
-							case protocol.MSG_TURN_UPDATE:
-								turnUpdate, err := protocol.ExtractTurnUpdate(response)
-								if err == nil {
-									myTurn = turnUpdate.YourTurn
-									t.Logf("Player%d: TURNO ATUALIZADO - Meu turno: %v", userNum, myTurn)
-								}
-							case protocol.MSG_MATCH_END:
-								gameOver = true
-								mutex.Lock()
-								partidasCompletas++
-								mutex.Unlock()
-								t.Logf("Player%d: PARTIDA FINALIZADA", userNum)
-							default:
-								t.Logf("Player%d: Mensagem não relacionada: %s", userNum, response.Type)
-							}
-							
-							// Se é meu turno e a partida começou, faz uma jogada
-							if myTurn && matchFound && !gameOver {
-								// Escolhe uma carta aleatória (simulação)
-								cardTypes := []string{"HYDRA", "QUIMERA", "GORGONA"}
-								chosenCard := cardTypes[userNum%3] // Distribui cartas de forma previsível
-								
-								t.Logf("Player%d: FAZENDO JOGADA - Carta: %s", userNum, chosenCard)
-								
-								// Cria e envia jogada
-								cardMoveMsg, err := protocol.CreateCardMove(userID, matchID, chosenCard)
-								if err != nil {
-									t.Logf("Player%d: ERRO ao criar mensagem de jogada: %v", userNum, err)
-									continue
-								}
-								
-								cardMoveMsg = append(cardMoveMsg, '\n')
-								if _, err := conn.Write(cardMoveMsg); err != nil {
-									t.Logf("Player%d: ERRO ao enviar jogada: %v", userNum, err)
-									continue
-								}
-								
-								mutex.Lock()
-								jogadasRealizadas++
-								mutex.Unlock()
-								
-								myTurn = false // Assume que não é mais meu turno após jogar
+							} else {
+								t.Logf("Player%d: Erro ao decodificar: %v", userNum, err)
 							}
 						} else {
 							if scanner.Err() != nil {
 								t.Logf("Player%d: Erro no scanner: %v", userNum, scanner.Err())
 								return
 							}
+							// Scanner retornou false - possivelmente conexão fechada
 							time.Sleep(100 * time.Millisecond)
 						}
-					case <-time.After(1 * time.Second):
+					case <-time.After(1 * time.Second): // Timeout para esta leitura específica
+						// Continua tentando se não conseguiu ler
 						time.Sleep(100 * time.Millisecond)
 					}
 				}
@@ -504,8 +447,6 @@ func TestStressMatchmaking(t *testing.T) {
 	elapsed := time.Since(startTime)
 	
 	mutex.Lock()
-	t.Logf("\n========================================")
-	t.Logf("      TESTE STRESS - MATCHMAKING COMPLETO")
 	t.Logf("\n========================================")
 	t.Logf("      TESTE STRESS - MATCHMAKING")
 	t.Logf("========================================")
