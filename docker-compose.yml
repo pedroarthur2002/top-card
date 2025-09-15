@@ -1,3 +1,5 @@
+version: '3.8'
+
 services:
   server:
     build: .
@@ -7,7 +9,7 @@ services:
       - SERVER_ADDR=:8080
     ports:
       - "8080:8080"
-  
+ 
   client:
     build: .
     environment:
@@ -17,15 +19,18 @@ services:
       - server
     stdin_open: true  # mantém o stdin aberto para digitar
     tty: true         # cria um terminal interativo
-  
+ 
   test:
-    build: 
+    build:
       context: .
       target: tester
     environment:
       - MODE=test
+      - SERVER_ADDR=server:8080  # endereço do servidor dentro do Docker
     volumes:
       - .:/app  # monta o código para facilitar desenvolvimento
     command: go test ./test/... -v  # executa todos os testes na pasta test
     profiles:
       - testing  # só executa quando especificado
+    depends_on:
+      - server  # garante que o servidor suba antes dos testes

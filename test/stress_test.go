@@ -4,14 +4,27 @@ import (
 	"bufio"
 	"fmt"
 	"net"
+	"os"
 	"sync"
 	"testing"
 	"time"
 	"top-card/internal/protocol"
 )
 
+// getServerAddr retorna o endereço do servidor a partir da variável de ambiente
+func getServerAddr() string {
+	serverAddr := os.Getenv("SERVER_ADDR")
+	if serverAddr == "" {
+		serverAddr = "localhost:8080" // fallback para desenvolvimento local
+	}
+	return serverAddr
+}
+
 // Teste de stress para abertura de pacotes
 func TestStressCardPacks(t *testing.T) {
+	serverAddr := getServerAddr()
+	t.Logf("Conectando ao servidor: %s", serverAddr)
+	
 	numUsers := 10
 	var wg sync.WaitGroup
 	
@@ -31,7 +44,7 @@ func TestStressCardPacks(t *testing.T) {
 			
 			username := fmt.Sprintf("pack_user_%d_%d", userNum, time.Now().UnixNano())
 			
-			conn, err := net.DialTimeout("tcp", "localhost:8080", 5*time.Second)
+			conn, err := net.DialTimeout("tcp", serverAddr, 5*time.Second)
 			if err != nil {
 				mutex.Lock()
 				erroConexao++
@@ -193,6 +206,9 @@ func TestStressCardPacks(t *testing.T) {
 
 // Teste de stress para matchmaking
 func TestStressMatchmaking(t *testing.T) {
+	serverAddr := getServerAddr()
+	t.Logf("Conectando ao servidor: %s", serverAddr)
+	
 	numUsers := 2 // Número par para formar partidas
 	var wg sync.WaitGroup
 	
@@ -215,7 +231,7 @@ func TestStressMatchmaking(t *testing.T) {
 			
 			username := fmt.Sprintf("match_player_%d_%d", userNum, time.Now().UnixNano())
 			
-			conn, err := net.DialTimeout("tcp", "localhost:8080", 5*time.Second)
+			conn, err := net.DialTimeout("tcp", serverAddr, 5*time.Second)
 			if err != nil {
 				mutex.Lock()
 				erroConexao++

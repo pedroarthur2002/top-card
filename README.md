@@ -78,9 +78,27 @@ docker-compose run --rm -e SERVER_ADDR=192.168.1.102:8080 client
 └── README.md
 ```
 
-## 🧪 Testes
+##  Testes
 
-*Fazer essa parte ainda*
+Para executar os testes é necessário:
+
+1. Faça o *build* da imagem:
+
+``` bash
+docker-compose build
+```
+
+2. Execute o servidor:
+
+``` bash
+docker-compose up server
+```
+
+3. Execute o comando de testes:
+
+``` bash
+docker-compose --profile testing run --rm test go test ./test -run TestStressCardPacks -v
+```
 
 ### Executar localmente (no powershell)
 Rodar o servidor
