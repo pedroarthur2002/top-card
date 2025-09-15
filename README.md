@@ -48,7 +48,7 @@ ipconfig
 
 - Linux
 ``` bash
-ipp addr show
+hostname -I
 ```
 
 2. Execute o servidor: 
