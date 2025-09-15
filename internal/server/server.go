@@ -217,8 +217,6 @@ func handleConnection(conn net.Conn) {
 			handleRegister(conn, message)
 		case protocol.MSG_QUEUE_REQUEST:
 			handleQueue(conn, message)
-		case protocol.MSG_PING_REQUEST:
-			handlePing(conn, message)
 		case protocol.MSG_STATS_REQUEST:  
 			handleStats(conn, message)
 		case protocol.MSG_CARD_PACK_REQUEST:
@@ -690,47 +688,6 @@ func handleLogin(conn net.Conn, message *protocol.Message) int {
 	}
 	
 	return userID
-}
-
-// Função de ping
-func handlePing(conn net.Conn, message *protocol.Message) {
-	// Extrai os dados da requisição de ping
-	pingReq, err := protocol.ExtractPingRequest(message)
-	if err != nil {
-		fmt.Println("Erro ao extrair dados de ping:", err)
-		return
-	}
-
-	fmt.Printf("Ping recebido do usuário ID: %d\n", pingReq.UserID)
-
-	var response []byte
-	
-	// Verifica se o usuário está conectado
-	connectedMutex.Lock()
-	isConnected := connectedUsers[pingReq.UserID]
-	connectedMutex.Unlock()
-	
-	if !isConnected {
-		// Usuário não está conectado/autenticado
-		response, err = protocol.CreatePingResponse(false, "Usuário não está conectado!")
-		fmt.Printf("Ping negado - usuário %d não está conectado\n", pingReq.UserID)
-	} else {
-		// Usuário conectado, responde com sucesso
-		response, err = protocol.CreatePingResponse(true, "Pong! Servidor respondeu.")
-		fmt.Printf("Ping respondido para usuário %d\n", pingReq.UserID)
-	}
-
-	if err != nil {
-		fmt.Println("Erro ao criar resposta de ping:", err)
-		return
-	}
-
-	// Envia a resposta
-	response = append(response, '\n')
-	_, err = conn.Write(response)
-	if err != nil {
-		fmt.Println("Erro ao enviar resposta de ping:", err)
-	}
 }
 
 func handleStats(conn net.Conn, message *protocol.Message) {

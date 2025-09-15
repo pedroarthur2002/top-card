@@ -10,6 +10,8 @@ import (
 	"time"
 	"sync"
 	"top-card/internal/protocol"
+	"golang.org/x/net/icmp"
+	"golang.org/x/net/ipv4"
 )
 
 var currentMatchID int
@@ -850,7 +852,7 @@ func handleStats(conn net.Conn) {
 	}
 }
 
-// Função de ping
+// função de ping
 func handlePing(conn net.Conn) {
 	if !checkConnection(){
 		return
@@ -866,64 +868,162 @@ func handlePing(conn net.Conn) {
 		return
 	}
 
-	fmt.Println("\n--- CONSULTA DE PING ---")
-	fmt.Println("🏓 Verificando latência...")
+	fmt.Println("\n--- CONSULTA DE PING ICMP ---")
+	fmt.Println("🏓 Verificando latência via ICMP...")
+
+	// Obtém endereço do servidor da conexão TCP existente
+	serverAddr := conn.RemoteAddr().(*net.TCPAddr).IP.String()
+	
+	// Realiza ping ICMP
+	latencia, err := realizarPingICMP(serverAddr)
+	if err != nil {
+		fmt.Printf("❌ Erro ao realizar ping ICMP: %v\n", err)
+		fmt.Println("💡 Dica: Execute como administrador/root para usar ICMP")
+		fmt.Println("🔄 Tentando fallback para ping TCP...")
+		
+		// Fallback para o ping TCP original se ICMP falhar
+		realizarPingTCPFallback(conn)
+		return
+	}
+
+	fmt.Printf("✅ Ping ICMP realizado com sucesso!\n")
+	fmt.Printf("🏓 Latência: %d ms\n", latencia)
+	fmt.Printf("📡 Destino: %s\n", serverAddr)
+}
+
+// função para realizar ping ICMP real
+func realizarPingICMP(endereco string) (int64, error) {
+	// Resolve o endereço
+	destino, err := net.ResolveIPAddr("ip4", endereco)
+	if err != nil {
+		return 0, fmt.Errorf("erro ao resolver endereço: %v", err)
+	}
+
+	// Cria conexão ICMP
+	conexao, err := icmp.ListenPacket("ip4:icmp", "0.0.0.0")
+	if err != nil {
+		return 0, fmt.Errorf("erro ao criar socket ICMP: %v", err)
+	}
+	defer conexao.Close()
+
+	// Cria mensagem ICMP Echo Request
+	mensagem := &icmp.Message{
+		Type: ipv4.ICMPTypeEcho,
+		Code: 0,
+		Body: &icmp.Echo{
+			ID:   os.Getpid() & 0xffff,
+			Seq:  1,
+			Data: []byte("TOP CARD PING"),
+		},
+	}
+
+	dados, err := mensagem.Marshal(nil)
+	if err != nil {
+		return 0, fmt.Errorf("erro ao serializar mensagem ICMP: %v", err)
+	}
+
+	// Registra tempo de início
+	inicio := time.Now()
+
+	// Envia ping
+	_, err = conexao.WriteTo(dados, destino)
+	if err != nil {
+		return 0, fmt.Errorf("erro ao enviar ping: %v", err)
+	}
+
+	// Define timeout para leitura
+	err = conexao.SetReadDeadline(time.Now().Add(3 * time.Second))
+	if err != nil {
+		return 0, fmt.Errorf("erro ao definir timeout: %v", err)
+	}
+
+	// Lê resposta
+	resposta := make([]byte, 1500)
+	n, peer, err := conexao.ReadFrom(resposta)
+	if err != nil {
+		return 0, fmt.Errorf("erro ao receber resposta: %v", err)
+	}
+
+	// Calcula duração
+	duracao := time.Since(inicio)
+
+	// Analisa resposta (protocolo IPv4 = 1)
+	const protocoloIPv4 = 1
+	mensagemResposta, err := icmp.ParseMessage(protocoloIPv4, resposta[:n])
+	if err != nil {
+		return 0, fmt.Errorf("erro ao analisar resposta: %v", err)
+	}
+
+	// Verifica se é Echo Reply (tipo 0)
+	if mensagemResposta.Type != ipv4.ICMPTypeEchoReply {
+		return 0, fmt.Errorf("tipo de resposta inesperado: %v (esperado: %v)", 
+			mensagemResposta.Type, ipv4.ICMPTypeEchoReply)
+	}
+
+	fmt.Printf("📡 Resposta de: %v\n", peer)
+	
+	return duracao.Milliseconds(), nil
+}
+
+func realizarPingTCPFallback(conn net.Conn) {
+	fmt.Println("\n--- FALLBACK: PING TCP ---")
+	fmt.Println("🏓 Verificando latência via TCP...")
 
 	// Registra o tempo de envio
-	startTime := time.Now()
+	tempoInicio := time.Now()
 
 	// Cria a mensagem de requisição do ping
-	pingMessage, err := protocol.CreatePingRequest(currentUserID)
+	mensagemPing, err := protocol.CreatePingRequest(currentUserID)
 	if err != nil {
 		fmt.Println("Erro ao solicitar o ping:", err)
 		return
 	}
 
-	// Adiciona quebra de linha para o servidor conseguir ler
-	pingMessage = append(pingMessage, '\n')
+	// Adiciona quebra de linha
+	mensagemPing = append(mensagemPing, '\n')
 
 	// Envia para o servidor
-	_, err = conn.Write(pingMessage)
+	_, err = conn.Write(mensagemPing)
 	if err != nil {
 		fmt.Println("Erro ao enviar requisição de ping:", err)
 		return
 	}
 
 	// Aguarda resposta síncrona
-	responseData, err := waitForSyncResponse(5 * time.Second)
+	dadosResposta, err := waitForSyncResponse(5 * time.Second)
 	if err != nil {
 		fmt.Println("Erro:", err)
 		return
 	}
 
 	// Registra o tempo de recebimento
-	endTime := time.Now()
+	tempoFim := time.Now()
 
 	// Decodifica a resposta
-	message, err := protocol.DecodeMessage(responseData)
+	mensagem, err := protocol.DecodeMessage(dadosResposta)
 	if err != nil {
 		fmt.Println("Erro ao decodificar resposta:", err)
 		return
 	}
 
-	if message.Type == protocol.MSG_PING_RESPONSE {
-		pingResp, err := protocol.ExtractPingResponse(message)
+	if mensagem.Type == protocol.MSG_PING_RESPONSE {
+		respostaPing, err := protocol.ExtractPingResponse(mensagem)
 		if err != nil {
 			fmt.Println("Erro ao extrair resposta do ping:", err)
 			return
 		}
 
-		if pingResp.Success {
+		if respostaPing.Success {
 			// Calcula a latência
-			latency := endTime.Sub(startTime).Milliseconds()
+			latencia := tempoFim.Sub(tempoInicio).Milliseconds()
 			
-			fmt.Printf("✅ %s\n", pingResp.Message)
-			fmt.Printf("🏓 Latência (round-trip): %d ms\n", latency)
+			fmt.Printf("✅ %s\n", respostaPing.Message)
+			fmt.Printf("🏓 Latência TCP (round-trip): %d ms\n", latencia)
 		} else {
-			fmt.Printf("❌ %s\n", pingResp.Message)
+			fmt.Printf("❌ %s\n", respostaPing.Message)
 		}
 	} else {
-		fmt.Printf("⚠️  Tipo de resposta inesperado: %s\n", message.Type)
+		fmt.Printf("⚠️  Tipo de resposta inesperado: %s\n", mensagem.Type)
 	}
 }
 
