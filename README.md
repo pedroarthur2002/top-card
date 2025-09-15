@@ -71,6 +71,7 @@ docker-compose run --rm -e SERVER_ADDR=192.168.1.102:8080 client
 .
 ├── cmd/                # Aplicação principal
 ├── internal/           # Código privado da aplicação
+├── test/               # Testes  
 ├── docker-compose.yml
 ├── Dockerfile
 ├── go.mod
@@ -96,17 +97,37 @@ docker-compose up server
 
 3. Execute o comando de testes:
 
+- Teste de abertura dos pacotes:
+
 ``` bash
 docker-compose --profile testing run --rm test go test ./test -run TestStressCardPacks -v
 ```
 
-### Executar localmente (no powershell)
-Rodar o servidor
-``` powershell
-  $env:MODE="server"; go run main.go
+- Teste do matchmaking:
+
+``` bash
+docker-compose --profile testing run --rm test go test ./test -run TestStressMatchmaking -v
 ```
 
-Rodar o client 
-``` powershell
-  $env:MODE="client"; $env:SERVER_ADDR="127.0.0.1:8080"; go run main.go
+### Execução distribuída
+Para executar os testes com servidor e teste em computadores diferentes é necessário:
+
+1. Execute o servidor:
+
+``` bash
+docker-compose up server
 ```
+
+2. Execute o teste de abertura dos pacotes: 
+
+``` bash
+SERVER_ADDR="192.168.1.100:8080" go test ./test -run TestStressCardPacks -v
+```
+
+3. Execute o teste do matchmaking:
+
+``` bash
+SERVER_ADDR="192.168.1.100:8080" go test ./test -run TestStressMatchmaking -v
+```
+
+> Substitua o IP `192.168.1.102` pelo IP da máquina onde o servidor está rodando

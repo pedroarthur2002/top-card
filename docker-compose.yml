@@ -2,7 +2,9 @@ version: '3.8'
 
 services:
   server:
-    build: .
+    build: 
+      context: .
+      target: runtime
     container_name: servidor
     environment:
       - MODE=server
@@ -11,7 +13,9 @@ services:
       - "8080:8080"
  
   client:
-    build: .
+    build: 
+      context: .
+      target: runtime
     environment:
       - MODE=client
       - SERVER_ADDR=server:8080
