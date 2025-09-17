@@ -25,7 +25,7 @@ func TestStressCardPacks(t *testing.T) {
 	serverAddr := getServerAddr()
 	t.Logf("Conectando ao servidor: %s", serverAddr)
 	
-	numUsers := 10
+	numUsers := 100
 	var wg sync.WaitGroup
 	
 	pacoteSucesso := 0
@@ -209,7 +209,7 @@ func TestStressLogin(t *testing.T) {
 	serverAddr := getServerAddr()
 	t.Logf("Conectando ao servidor: %s", serverAddr)
 	
-	numUsers := 15
+	numUsers := 200
 	var wg sync.WaitGroup
 	
 	loginSucesso := 0
@@ -386,7 +386,7 @@ func TestStressQueue(t *testing.T) {
 	serverAddr := getServerAddr()
 	t.Logf("Conectando ao servidor: %s", serverAddr)
 	
-	numUsers := 12
+	numUsers := 200
 	var wg sync.WaitGroup
 	
 	filaSucesso := 0

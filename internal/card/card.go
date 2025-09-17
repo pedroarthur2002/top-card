@@ -29,9 +29,9 @@ type CardStock struct {
 
 // Instância global do estoque
 var globalStock = &CardStock{
-    hydraCount:   100,   // Mais comum
-    quimeraCount: 70,    // Mediano
-    gorgonaCount: 30,    // Mais raro
+    hydraCount:   10000,   // Mais comum
+    quimeraCount: 7000,    // Mediano
+    gorgonaCount: 3000,    // Mais raro
 }
 
 // Inicializa o gerador de números aleatórios
