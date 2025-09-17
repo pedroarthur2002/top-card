@@ -204,22 +204,19 @@ func TestStressCardPacks(t *testing.T) {
 	mutex.Unlock()
 }
 
-// Teste de stress para matchmaking
-func TestStressMatchmaking(t *testing.T) {
+// Teste de stress para login
+func TestStressLogin(t *testing.T) {
 	serverAddr := getServerAddr()
 	t.Logf("Conectando ao servidor: %s", serverAddr)
 	
-	numUsers := 2 // Número par para formar partidas
+	numUsers := 15
 	var wg sync.WaitGroup
 	
-	sucessoCompleto := 0
+	loginSucesso := 0
+	loginFalha := 0
 	erroConexao := 0
 	erroRegistro := 0
-	erroLogin := 0
-	erroPacote := 0
-	erroFila := 0
-	partidasEncontradas := 0
-	timeoutPartida := 0
+	loginDuplicado := 0
 	var mutex sync.Mutex
 
 	startTime := time.Now()
@@ -229,19 +226,199 @@ func TestStressMatchmaking(t *testing.T) {
 		go func(userNum int) {
 			defer wg.Done()
 			
-			username := fmt.Sprintf("match_player_%d_%d", userNum, time.Now().UnixNano())
+			username := fmt.Sprintf("login_user_%d_%d", userNum, time.Now().UnixNano())
 			
 			conn, err := net.DialTimeout("tcp", serverAddr, 5*time.Second)
 			if err != nil {
 				mutex.Lock()
 				erroConexao++
 				mutex.Unlock()
-				t.Logf("Player%d: ERRO CONEXAO", userNum)
+				t.Logf("User%d: ERRO CONEXAO - %v", userNum, err)
 				return
 			}
 			defer conn.Close()
 			
-			conn.SetDeadline(time.Now().Add(60 * time.Second)) // Timeout aumentado para 60s
+			conn.SetDeadline(time.Now().Add(10 * time.Second))
+			scanner := bufio.NewScanner(conn)
+			
+			// 1. REGISTRO
+			registerMsg, _ := protocol.CreateRegisterRequest(username, "pass123")
+			registerMsg = append(registerMsg, '\n')
+			if _, err = conn.Write(registerMsg); err != nil {
+				mutex.Lock()
+				erroConexao++
+				mutex.Unlock()
+				return
+			}
+			
+			if !scanner.Scan() {
+				mutex.Lock()
+				erroRegistro++
+				mutex.Unlock()
+				t.Logf("User%d: ERRO SCAN REGISTRO", userNum)
+				return
+			}
+			
+			response, err := protocol.DecodeMessage(scanner.Bytes())
+			if err != nil {
+				mutex.Lock()
+				erroRegistro++
+				mutex.Unlock()
+				return
+			}
+			
+			registerResp, err := protocol.ExtractRegisterResponse(response)
+			if err != nil || !registerResp.Success {
+				mutex.Lock()
+				erroRegistro++
+				mutex.Unlock()
+				t.Logf("User%d: ERRO REGISTRO - %s", userNum, registerResp.Message)
+				return
+			}
+			
+			// 2. LOGIN
+			loginMsg, _ := protocol.CreateLoginRequest(username, "pass123")
+			loginMsg = append(loginMsg, '\n')
+			if _, err = conn.Write(loginMsg); err != nil {
+				mutex.Lock()
+				loginFalha++
+				mutex.Unlock()
+				return
+			}
+			
+			if !scanner.Scan() {
+				mutex.Lock()
+				loginFalha++
+				mutex.Unlock()
+				return
+			}
+			
+			response, err = protocol.DecodeMessage(scanner.Bytes())
+			if err != nil {
+				mutex.Lock()
+				loginFalha++
+				mutex.Unlock()
+				return
+			}
+			
+			loginResp, err := protocol.ExtractLoginResponse(response)
+			if err != nil {
+				mutex.Lock()
+				loginFalha++
+				mutex.Unlock()
+				return
+			}
+			
+			mutex.Lock()
+			if loginResp.Success {
+				loginSucesso++
+				t.Logf("User%d: LOGIN SUCESSO - ID: %d", userNum, loginResp.UserID)
+				
+				// 3. TENTA LOGIN DUPLICADO (deve falhar)
+				mutex.Unlock()
+				
+				// Abre segunda conexão para testar login duplicado
+				conn2, err := net.DialTimeout("tcp", serverAddr, 5*time.Second)
+				if err == nil {
+					defer conn2.Close()
+					conn2.SetDeadline(time.Now().Add(5 * time.Second))
+					scanner2 := bufio.NewScanner(conn2)
+					
+					loginMsg2, _ := protocol.CreateLoginRequest(username, "pass123")
+					loginMsg2 = append(loginMsg2, '\n')
+					if _, err = conn2.Write(loginMsg2); err == nil {
+						if scanner2.Scan() {
+							response2, err := protocol.DecodeMessage(scanner2.Bytes())
+							if err == nil {
+								loginResp2, err := protocol.ExtractLoginResponse(response2)
+								if err == nil && !loginResp2.Success {
+									mutex.Lock()
+									loginDuplicado++
+									t.Logf("User%d: LOGIN DUPLICADO BLOQUEADO - %s", userNum, loginResp2.Message)
+									mutex.Unlock()
+								}
+							}
+						}
+					}
+				}
+				
+			} else {
+				loginFalha++
+				t.Logf("User%d: LOGIN FALHOU - %s", userNum, loginResp.Message)
+				mutex.Unlock()
+			}
+			
+		}(i+1)
+		
+		time.Sleep(100 * time.Millisecond)
+	}
+	
+	wg.Wait()
+	elapsed := time.Since(startTime)
+	
+	mutex.Lock()
+	t.Logf("\n========================================")
+	t.Logf("       TESTE STRESS - LOGIN")
+	t.Logf("========================================")
+	t.Logf("Usuarios testados: %d", numUsers)
+	t.Logf("Tempo total: %v", elapsed)
+	t.Logf("----------------------------------------")
+	t.Logf("LOGIN SUCESSO:       %d", loginSucesso)
+	t.Logf("LOGIN FALHA:         %d", loginFalha)
+	t.Logf("LOGIN DUPLICADO:     %d", loginDuplicado)
+	t.Logf("ERRO CONEXAO:        %d", erroConexao)
+	t.Logf("ERRO REGISTRO:       %d", erroRegistro)
+	t.Logf("----------------------------------------")
+	total := loginSucesso + loginFalha + erroConexao + erroRegistro
+	t.Logf("TOTAL:               %d", total)
+	
+	if loginSucesso > 0 {
+		successRate := float64(loginSucesso) / float64(numUsers) * 100
+		t.Logf("TAXA SUCESSO:        %.1f%%", successRate)
+	}
+	
+	t.Logf("========================================")
+	mutex.Unlock()
+}
+
+// Teste de stress para entrar na fila
+func TestStressQueue(t *testing.T) {
+	serverAddr := getServerAddr()
+	t.Logf("Conectando ao servidor: %s", serverAddr)
+	
+	numUsers := 12
+	var wg sync.WaitGroup
+	
+	filaSucesso := 0
+	filaFalha := 0
+	erroConexao := 0
+	erroRegistro := 0
+	erroLogin := 0
+	erroPacote := 0
+	filaDuplicada := 0
+	filaSemCartas := 0
+	var mutex sync.Mutex
+
+	startTime := time.Now()
+
+	for i := 0; i < numUsers; i++ {
+		wg.Add(1)
+		go func(userNum int) {
+			defer wg.Done()
+			
+			username := fmt.Sprintf("queue_user_%d_%d", userNum, time.Now().UnixNano())
+			
+			conn, err := net.DialTimeout("tcp", serverAddr, 5*time.Second)
+			if err != nil {
+				mutex.Lock()
+				erroConexao++
+				mutex.Unlock()
+				t.Logf("User%d: ERRO CONEXAO - %v", userNum, err)
+				return
+			}
+			defer conn.Close()
+			
+			conn.SetDeadline(time.Now().Add(20 * time.Second))
 			scanner := bufio.NewScanner(conn)
 			
 			// 1. REGISTRO
@@ -274,7 +451,6 @@ func TestStressMatchmaking(t *testing.T) {
 				mutex.Lock()
 				erroRegistro++
 				mutex.Unlock()
-				t.Logf("Player%d: ERRO REGISTRO", userNum)
 				return
 			}
 			userID := registerResp.UserID
@@ -309,11 +485,50 @@ func TestStressMatchmaking(t *testing.T) {
 				mutex.Lock()
 				erroLogin++
 				mutex.Unlock()
-				t.Logf("Player%d: ERRO LOGIN", userNum)
 				return
 			}
 			
-			// 3. ABRIR PACOTE (necessário para entrar na fila)
+			// 3. TENTA ENTRAR NA FILA SEM CARTAS (deve falhar)
+			queueMsg1, _ := protocol.CreateQueueRequest(userID)
+			queueMsg1 = append(queueMsg1, '\n')
+			if _, err = conn.Write(queueMsg1); err != nil {
+				mutex.Lock()
+				filaFalha++
+				mutex.Unlock()
+				return
+			}
+			
+			if !scanner.Scan() {
+				mutex.Lock()
+				filaFalha++
+				mutex.Unlock()
+				return
+			}
+			
+			response, err = protocol.DecodeMessage(scanner.Bytes())
+			if err != nil {
+				mutex.Lock()
+				filaFalha++
+				mutex.Unlock()
+				return
+			}
+			
+			queueResp1, err := protocol.ExtractQueueResponse(response)
+			if err != nil {
+				mutex.Lock()
+				filaFalha++
+				mutex.Unlock()
+				return
+			}
+			
+			if !queueResp1.Success {
+				mutex.Lock()
+				filaSemCartas++
+				t.Logf("User%d: FILA NEGADA SEM CARTAS - %s", userNum, queueResp1.Message)
+				mutex.Unlock()
+			}
+			
+			// 4. ABRIR PACOTE PARA TER CARTAS
 			packMsg, _ := protocol.CreateCardPackRequest(userID)
 			packMsg = append(packMsg, '\n')
 			if _, err = conn.Write(packMsg); err != nil {
@@ -343,23 +558,22 @@ func TestStressMatchmaking(t *testing.T) {
 				mutex.Lock()
 				erroPacote++
 				mutex.Unlock()
-				t.Logf("Player%d: ERRO PACOTE", userNum)
 				return
 			}
 			
-			// 4. ENTRAR NA FILA
-			queueMsg, _ := protocol.CreateQueueRequest(userID)
-			queueMsg = append(queueMsg, '\n')
-			if _, err = conn.Write(queueMsg); err != nil {
+			// 5. ENTRAR NA FILA COM CARTAS (deve funcionar)
+			queueMsg2, _ := protocol.CreateQueueRequest(userID)
+			queueMsg2 = append(queueMsg2, '\n')
+			if _, err = conn.Write(queueMsg2); err != nil {
 				mutex.Lock()
-				erroFila++
+				filaFalha++
 				mutex.Unlock()
 				return
 			}
 			
 			if !scanner.Scan() {
 				mutex.Lock()
-				erroFila++
+				filaFalha++
 				mutex.Unlock()
 				return
 			}
@@ -367,96 +581,52 @@ func TestStressMatchmaking(t *testing.T) {
 			response, err = protocol.DecodeMessage(scanner.Bytes())
 			if err != nil {
 				mutex.Lock()
-				erroFila++
+				filaFalha++
 				mutex.Unlock()
 				return
 			}
 			
-			queueResp, err := protocol.ExtractQueueResponse(response)
-			if err != nil || !queueResp.Success {
+			queueResp2, err := protocol.ExtractQueueResponse(response)
+			if err != nil {
 				mutex.Lock()
-				erroFila++
+				filaFalha++
 				mutex.Unlock()
-				t.Logf("Player%d: ERRO FILA - %s", userNum, queueResp.Message)
 				return
 			}
 			
-			t.Logf("Player%d: NA FILA - tamanho: %d", userNum, queueResp.QueueSize)
-			
-			// 5. AGUARDAR PARTIDA (aguarda até 30 segundos)
-			timeout := time.NewTimer(30 * time.Second) // Aumentado de 25s para 30s
-			defer timeout.Stop()
-			matchFound := false
-			messagesReceived := 0
-			
-			// Remove timeout específico - usa timeout geral da conexão
-			conn.SetReadDeadline(time.Time{}) // Remove deadline específico
-			
-			for !matchFound && messagesReceived < 10 { // Aumentado limite de mensagens
-				select {
-				case <-timeout.C:
-					mutex.Lock()
-					timeoutPartida++
-					mutex.Unlock()
-					t.Logf("Player%d: TIMEOUT - partida não encontrada após 30s", userNum)
-					return
-				default:
-					// Canal para fazer leitura não-bloqueante
-					scanChan := make(chan bool, 1)
-					go func() {
-						scanChan <- scanner.Scan()
-					}()
-					
-					select {
-					case scanned := <-scanChan:
-						if scanned {
-							messagesReceived++
-							t.Logf("Player%d: Mensagem recebida (%d/10)", userNum, messagesReceived)
-							
-							response, err := protocol.DecodeMessage(scanner.Bytes())
-							if err == nil {
-								t.Logf("Player%d: Tipo mensagem: %s", userNum, response.Type)
-								switch response.Type {
-								case protocol.MSG_MATCH_FOUND:
-									mutex.Lock()
-									partidasEncontradas++
-									mutex.Unlock()
-									matchFound = true
-									t.Logf("Player%d: PARTIDA ENCONTRADA!", userNum)
-								case protocol.MSG_MATCH_START:
-									t.Logf("Player%d: PARTIDA INICIADA!", userNum)
-								case protocol.MSG_GAME_STATE:
-									t.Logf("Player%d: ESTADO DO JOGO recebido!", userNum)
-								default:
-									t.Logf("Player%d: Mensagem não relacionada: %s", userNum, response.Type)
-								}
-							} else {
-								t.Logf("Player%d: Erro ao decodificar: %v", userNum, err)
+			mutex.Lock()
+			if queueResp2.Success {
+				filaSucesso++
+				t.Logf("User%d: FILA SUCESSO - tamanho: %d", userNum, queueResp2.QueueSize)
+				mutex.Unlock()
+				
+				// 6. TENTA ENTRAR NA FILA NOVAMENTE (deve falhar - duplicado)
+				queueMsg3, _ := protocol.CreateQueueRequest(userID)
+				queueMsg3 = append(queueMsg3, '\n')
+				if _, err = conn.Write(queueMsg3); err == nil {
+					if scanner.Scan() {
+						response, err := protocol.DecodeMessage(scanner.Bytes())
+						if err == nil {
+							queueResp3, err := protocol.ExtractQueueResponse(response)
+							if err == nil && !queueResp3.Success {
+								mutex.Lock()
+								filaDuplicada++
+								t.Logf("User%d: FILA DUPLICADA BLOQUEADA - %s", userNum, queueResp3.Message)
+								mutex.Unlock()
 							}
-						} else {
-							if scanner.Err() != nil {
-								t.Logf("Player%d: Erro no scanner: %v", userNum, scanner.Err())
-								return
-							}
-							// Scanner retornou false - possivelmente conexão fechada
-							time.Sleep(100 * time.Millisecond)
 						}
-					case <-time.After(1 * time.Second): // Timeout para esta leitura específica
-						// Continua tentando se não conseguiu ler
-						time.Sleep(100 * time.Millisecond)
 					}
 				}
-			}
-			
-			if matchFound {
-				mutex.Lock()
-				sucessoCompleto++
+				
+			} else {
+				filaFalha++
+				t.Logf("User%d: FILA FALHOU - %s", userNum, queueResp2.Message)
 				mutex.Unlock()
 			}
 			
 		}(i+1)
 		
-		time.Sleep(200 * time.Millisecond)
+		time.Sleep(150 * time.Millisecond)
 	}
 	
 	wg.Wait()
@@ -464,23 +634,25 @@ func TestStressMatchmaking(t *testing.T) {
 	
 	mutex.Lock()
 	t.Logf("\n========================================")
-	t.Logf("      TESTE STRESS - MATCHMAKING")
+	t.Logf("       TESTE STRESS - FILA")
 	t.Logf("========================================")
-	t.Logf("Players testados: %d", numUsers)
+	t.Logf("Usuarios testados: %d", numUsers)
 	t.Logf("Tempo total: %v", elapsed)
 	t.Logf("----------------------------------------")
-	t.Logf("FLUXO COMPLETO:      %d", sucessoCompleto)
-	t.Logf("PARTIDAS FORMADAS:   %d", partidasEncontradas/2)
-	t.Logf("TIMEOUTS PARTIDA:    %d", timeoutPartida)
+	t.Logf("FILA SUCESSO:        %d", filaSucesso)
+	t.Logf("FILA FALHA:          %d", filaFalha)
+	t.Logf("FILA SEM CARTAS:     %d", filaSemCartas)
+	t.Logf("FILA DUPLICADA:      %d", filaDuplicada)
 	t.Logf("ERRO CONEXAO:        %d", erroConexao)
 	t.Logf("ERRO REGISTRO:       %d", erroRegistro)
 	t.Logf("ERRO LOGIN:          %d", erroLogin)
 	t.Logf("ERRO PACOTE:         %d", erroPacote)
-	t.Logf("ERRO FILA:           %d", erroFila)
 	t.Logf("----------------------------------------")
+	total := filaSucesso + filaFalha + erroConexao + erroRegistro + erroLogin + erroPacote
+	t.Logf("TOTAL:               %d", total)
 	
-	if sucessoCompleto > 0 {
-		successRate := float64(sucessoCompleto) / float64(numUsers) * 100
+	if filaSucesso > 0 {
+		successRate := float64(filaSucesso) / float64(numUsers) * 100
 		t.Logf("TAXA SUCESSO:        %.1f%%", successRate)
 	}
 	

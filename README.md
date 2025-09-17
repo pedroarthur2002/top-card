@@ -124,10 +124,16 @@ docker-compose up server
 SERVER_ADDR="192.168.1.100:8080" go test ./test -run TestStressCardPacks -v
 ```
 
-3. Execute o teste do matchmaking:
+3. Execute o teste de login's simultâneos: 
 
 ``` bash
-SERVER_ADDR="192.168.1.100:8080" go test ./test -run TestStressMatchmaking -v
+SERVER_ADDR="192.168.1.100:8080" go test ./test -run TestStressLogin -v
+```
+
+2. Execute o teste de entrada na fila: 
+
+``` bash
+SERVER_ADDR="192.168.1.100:8080" go test ./test -run TestStressQueue -v
 ```
 
 > Substitua o IP `192.168.1.102` pelo IP da máquina onde o servidor está rodando
