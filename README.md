@@ -103,10 +103,16 @@ docker-compose up server
 docker-compose --profile testing run --rm test go test ./test -run TestStressCardPacks -v
 ```
 
-- Teste do matchmaking:
+- Teste de login simultâneo:
 
 ``` bash
-docker-compose --profile testing run --rm test go test ./test -run TestStressMatchmaking -v
+docker-compose --profile testing run --rm test go test ./test -run TestStressLogin -v
+```
+
+- Teste de entrada na fila:
+
+``` bash
+docker-compose --profile testing run --rm test go test ./test -run TestStressQueue -v
 ```
 
 ### Execução distribuída
@@ -124,7 +130,7 @@ docker-compose up server
 SERVER_ADDR="192.168.1.100:8080" go test ./test -run TestStressCardPacks -v
 ```
 
-3. Execute o teste de login's simultâneos: 
+3. Execute o teste de login simultâneos: 
 
 ``` bash
 SERVER_ADDR="192.168.1.100:8080" go test ./test -run TestStressLogin -v
